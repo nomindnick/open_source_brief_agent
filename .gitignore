@@ -1,0 +1,16 @@
+# Secrets and machine-specific config
+.env
+config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# uv / virtualenv
+.venv/
+
+# Runtime output — traces grow; SPEC says gitignore once it does
+traces/

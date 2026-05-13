@@ -1,0 +1,42 @@
+# Copy to config.toml and edit. The real config.toml is gitignored.
+#
+# Two model profiles below — pick one with `python -m agent --model <profile-name>`,
+# or set `default_model` to choose without an explicit flag.
+
+default_model = "qwen3-30b-llamacpp"
+vault_path = "/home/nick/Obsidian/Vault"    # absolute path to your Obsidian vault root; briefs land at <vault_path>/Briefs/
+iteration_cap = 25                          # hard safety net for the agent loop
+
+# ── llama.cpp profile ────────────────────────────────────────────────────────
+#
+# Requires llama-server running locally, e.g.:
+#
+#   llama-server \
+#     -m ~/models/qwen3-30b-a3b-q8/Qwen3-30B-A3B-UD-Q8_K_XL.gguf \
+#     -c 32768 \
+#     --host 127.0.0.1 --port 8080
+#
+# The -c flag MUST be at least as large as `context_length` below — that flag
+# determines actual KV cache allocation. `context_length` is just what the agent
+# code budgets against.
+[models.qwen3-30b-llamacpp]
+backend = "llamacpp"
+model_name = "qwen3-30b-a3b-q8"
+base_url = "http://127.0.0.1:8080"
+temperature = 0.7
+max_tokens = 4096
+context_length = 32768
+supports_thinking = true   # Qwen3 emits <think>…</think> blocks; adapter strips them into ModelResponse.reasoning
+
+# ── Ollama profile ───────────────────────────────────────────────────────────
+#
+# Requires the Ollama daemon running (`sudo systemctl start ollama` on this machine)
+# and the model pulled (`ollama pull qwen3.5:9b`).
+[models.qwen3-9b-ollama]
+backend = "ollama"
+model_name = "qwen3.5:9b"
+base_url = "http://127.0.0.1:11434"
+temperature = 0.7
+max_tokens = 4096
+context_length = 32768
+supports_thinking = true   # Ollama adapter will send "think": true and read message.thinking

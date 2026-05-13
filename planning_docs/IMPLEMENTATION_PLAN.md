@@ -37,7 +37,11 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - Repo is committable with no secrets
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** uv-managed Python 3.12 project; deps pinned in `pyproject.toml` (httpx, pydantic, pydantic-settings, python-dotenv; pytest in `[dependency-groups].dev`). `uv sync` works from clean. Entrypoint wired: `python -m agent --help` prints usage; `cli.py` has stub flags `--mission`, `--model`, `--dry-run` for Sprint 2.2 to fill in. `config.toml.example` and `.env.example` checked in; real `config.toml` and `.env` gitignored. `.python-version` pinned to 3.12 and committed (collaborators get the right Python; SPEC's gitignore list omitted it — judgment call to keep it tracked). `memory/Interests.md` seeded with the user's real interests so the filter has signal from run 1. README skeleton covers install/configure/run; deeper docs deferred to Sprint 5.1 per plan.
+>
+> **Deviation from SPEC layout:** SPEC suggested multiple top-level packages under `src/` (`agent/`, `model/`, `tools/`, `memory/`, `trace/`, `brief/`, plus loose `config.py` and `cli.py`). Collapsed to a single `agent` package with `agent.model`, `agent.tools`, etc. as subpackages, with `cli.py` and `config.py` moved inside `agent/`. Reason: hatchling/uv packaging is much cleaner with one top-level package, and the module boundaries (one folder per concern) are preserved. Imports will read `from agent.model.llamacpp import …` instead of `from model.llamacpp import …`. Tests run via `pytest` config (`pythonpath = ["src"]`).
+>
+> **For Sprint 1.2:** `agent.config` and `agent.model.{base,llamacpp,ollama}` are empty stubs ready to fill in. `config.toml.example` already has the two known-good profiles (qwen3-30b-llamacpp at 32K, qwen3-9b-ollama at 32K, both `supports_thinking = true`); Sprint 1.2 just needs to make the loader read them. The cli already has a `--model` flag wired in, so smoke/benchmark scripts can match its calling convention.
 
 ---
 
