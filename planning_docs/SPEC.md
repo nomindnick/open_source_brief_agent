@@ -43,6 +43,12 @@ Tools are defined in the system prompt with an XML schema. The model emits `<too
 
 A `ModelInterface` abstraction with concrete implementations for llama.cpp (primary, for parameter-level experimentation) and Ollama (fallback). A `FrontierAdapter` interface is reserved for a later frontier-API implementation. Backend, model name, temperature, and context length are config-driven, not hard-coded.
 
+**Multi-profile config.** `config.toml` declares a list of *model profiles*, each a named bundle of `(backend, model_name, base_url, temperature, max_tokens, context_length, supports_thinking)`. The CLI accepts `--model <profile>` to pick one for a run. Adding a new model to evaluate is a config edit, not a code change.
+
+**Context length: default generous.** For each profile, `context_length` is set to the largest value the model supports that fits in available memory — not a small "safe" default. The weights are a fixed cost; KV cache is the variable. On a 96GB GPU partition with a 30B Q8 model (~36GB), there's ~60GB of headroom — comfortably enough for 32K–64K context, often more. Tighter contexts only become correct when there's a specific reason: running multiple agents in parallel that compete for VRAM, or a model whose long-context performance is known to degrade. Otherwise, give the agent as much context as the hardware affords — the filter stage and per-paper reads both benefit from the headroom, and the cost is some extra prefill time on an overnight workflow that doesn't care.
+
+**Thinking-aware response shape.** Reasoning-model output (e.g. Qwen3, Qwen3.5, future Claude thinking) is data the user wants to inspect, not noise to discard. The adapter separates thinking from final output and returns a structured `ModelResponse` with fields `content` (post-thinking, what the agent loop's parser consumes), `reasoning` (thinking content, logged to the trace, never parsed), `raw` (full unmodified response for debugging), and `usage` (token counts). Adapters are responsible for the per-backend mechanism: Ollama sets `"think": true` and reads `message.thinking`; llama.cpp regex-splits `<think>…</think>` blocks; frontier adapters use the provider's native thinking API. Non-reasoning models return `reasoning=None` and the rest of the system is unchanged.
+
 ### Version-Controlled Prompts & Memory
 
 System prompts live as markdown files in the project repo (`prompts/`). Memory files (`memory/Interests.md`, `memory/Seen.md`, `memory/Reflections/*.md`) also live in the repo. The whole project is git-tracked, so prompt experimentation produces a history the user can diff and revert.
@@ -54,6 +60,8 @@ At run start, the agent reads `memory/Interests.md` (user-curated) and recent en
 ### Reasoning Traces
 
 Every run writes both a structured `traces/YYYY-MM-DD/trace.jsonl` (one event per line: thoughts, tool calls, tool results, raw model output) and a human-readable `traces/YYYY-MM-DD/trace.md` for skimming. Traces are git-tracked so prompt changes can be evaluated against past behavior.
+
+For reasoning models, the trace logs each turn's `reasoning` block alongside its `content` (and any tool calls or final answer parsed from `content`). In the markdown trace, reasoning renders as a collapsible/quoted block above the agent's action — readable but not visually dominant. This is the primary review surface for "what was the agent thinking when it made this choice."
 
 ## Technical Architecture
 
@@ -112,7 +120,7 @@ Brief output (written to Obsidian vault, not the repo):
 ### Key Design Decisions
 
 1. **Custom XML tool calling, not native function calling.** Better debuggability via plain-text traces, model-portability across local backends, graceful retry on parse failure, and higher learning value. Native tool calling remains a viable later experiment behind the same `ModelInterface`.
-2. **`hf papers` CLI as primary data source, not HTML scraping or arxiv API.** Returns structured JSON with `--format json`, no auth required for read operations, no HTML cleanup, and provides both list and full-text read in one tool family. Net: simpler ingest path with no loss of capability.
+2. **`hf papers` CLI as primary data source, not HTML scraping or arxiv API.** Returns structured JSON with `--format json` (and a denser TSV `--format agent` mode worth trying during filter-stage tuning if token budget is tight), and provides both list and full-text read in one tool family. The `read` output wraps arxiv HTML chrome around the paper markdown, so the tool wrapper strips that before returning. Net: simpler ingest path with no loss of capability.
 3. **Markdown everything (prompts, memory, briefs).** Hand-editable, diffable, greppable, version-controllable, and lets the user use Obsidian itself as the reading interface for briefs.
 4. **Memory as prompt input, not retrieval.** No vector store, no embeddings. The agent reads `Interests.md` and the latest reflection directly into its system prompt at run start. Simple, transparent, and sufficient for current scale (~60 papers/day, single user).
 5. **Two-stage paper processing (batched filter → per-paper summary).** A single model call ranks/filters all ~60 papers using titles + abstracts + Interests.md, returning IDs of keepers. Per-paper summarization runs only on keepers. Trades a small amount of compute for substantially better signal-to-noise and creates a natural seam for later orchestrator/worker model split.
@@ -127,7 +135,7 @@ Brief output (written to Obsidian vault, not the repo):
 - **Local-model agentic reliability.** Open-weight instruct models are weaker on multi-step tool-calling than frontier models. Expect to spend prompt-engineering time on the system prompts and on parser leniency. The XML format and retry-on-parse-failure are mitigations.
 - **Filter prompt quality.** "Personal relevance" is a fuzzy judgment. Expect to iterate on `system_filter.md` and on `Interests.md` for the first several runs. Reflections should help surface where the filter went wrong.
 - **`hf papers` CLI surface stability.** Newer CLI; subcommand surface may change. Wrap it behind a thin adapter so a future version change is a one-file fix.
-- **Daily paper volume variance.** ~60 papers is typical but not guaranteed; the filter prompt and context budget need to handle 100+ paper days. Truncate or chunk if needed.
+- **Daily paper volume variance.** ~50–60 papers is typical (50 observed on 2026-05-13). With a generous per-profile `context_length` (see "Context length: default generous" above), even a 100+ paper day fits comfortably — title + abstract is roughly 200 tokens per paper, so 100 papers ≈ 20K tokens, well under a 32K+ budget. Chunking is reserved for genuinely outsized days, not a normal-case requirement.
 
 ### Out of Scope (v1)
 
