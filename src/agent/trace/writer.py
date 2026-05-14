@@ -190,6 +190,48 @@ class TraceWriter:
             f"final answer.\n"
         )
 
+    # ── pipeline stages (Sprint 3.2+) ──────────────────────────────────
+
+    def log_filter_input(self, papers_count: int, interests_chars: int) -> None:
+        self._write_jsonl_event(
+            "filter_input",
+            papers_count=papers_count,
+            interests_chars=interests_chars,
+        )
+        self._write_md(
+            f"---\n\n## Filter stage\n\n"
+            f"- **Papers in:** {papers_count}\n"
+            f"- **Interests size:** {interests_chars} chars\n\n"
+        )
+
+    def log_filter_response(self, content: str, reasoning: str | None) -> None:
+        self._write_jsonl_event(
+            "filter_response",
+            content=content,
+            reasoning=reasoning,
+        )
+        if reasoning:
+            quoted = "\n".join(f"> {line}" if line else ">" for line in reasoning.splitlines())
+            self._write_md(f"> **Filter reasoning**\n>\n{quoted}\n\n")
+        self._write_md(f"```json\n{content}\n```\n\n")
+
+    def log_filter_keepers(self, keepers: list[Any]) -> None:
+        # Tolerate either Keeper objects or raw dicts so the trace surface
+        # doesn't pin to a specific module import.
+        normalized = [
+            {"id": getattr(k, "id", None) or (k.get("id") if isinstance(k, dict) else None),
+             "reason": getattr(k, "reason", None) or (k.get("reason") if isinstance(k, dict) else None)}
+            for k in keepers
+        ]
+        self._write_jsonl_event("filter_keepers", count=len(normalized), keepers=normalized)
+        if not normalized:
+            self._write_md("**Keepers:** none — nothing met the bar today.\n\n")
+            return
+        self._write_md(f"**Keepers ({len(normalized)}):**\n\n")
+        for k in normalized:
+            self._write_md(f"- `{k['id']}` — {k['reason']}\n")
+        self._write_md("\n")
+
     def close(self) -> None:
         if self._closed:
             return

@@ -47,19 +47,28 @@ class AgentResult:
 
 
 class TraceSink(Protocol):
-    """The minimal trace surface the loop calls into.
+    """The minimal trace surface the loop and pipeline stages call into.
 
-    Sprint 2.3's real :class:`TraceWriter` implements this exact surface
-    plus file I/O. The Sprint 2.2 stubs (:class:`StdoutTrace`,
-    :class:`NoOpTrace`) implement just the surface.
+    Sprint 2.3's :class:`TraceWriter` implements this surface plus file I/O.
+    Stubs (:class:`StdoutTrace`, :class:`NoOpTrace`) implement just the surface.
+
+    Surface is grouped by concern: agent-loop events live above
+    ``log_iteration_cap``; pipeline-stage events (filter, summarize) live
+    below. Stages are independent — a mission may call only some.
     """
 
+    # ── agent loop ─────────────────────────────────────────────────────
     def log_model_turn(self, content: str, reasoning: str | None) -> None: ...
     def log_tool_call(self, name: str, input: dict[str, Any]) -> None: ...
     def log_tool_result(self, name: str, result: str) -> None: ...
     def log_parse_error(self, reason: str) -> None: ...
     def log_final_answer(self, text: str) -> None: ...
     def log_iteration_cap(self, max_iter: int) -> None: ...
+
+    # ── pipeline stages (Sprint 3.2+) ──────────────────────────────────
+    def log_filter_input(self, papers_count: int, interests_chars: int) -> None: ...
+    def log_filter_response(self, content: str, reasoning: str | None) -> None: ...
+    def log_filter_keepers(self, keepers: list[Any]) -> None: ...
 
 
 class NoOpTrace:
@@ -71,6 +80,9 @@ class NoOpTrace:
     def log_parse_error(self, reason: str) -> None: ...
     def log_final_answer(self, text: str) -> None: ...
     def log_iteration_cap(self, max_iter: int) -> None: ...
+    def log_filter_input(self, papers_count: int, interests_chars: int) -> None: ...
+    def log_filter_response(self, content: str, reasoning: str | None) -> None: ...
+    def log_filter_keepers(self, keepers: list[Any]) -> None: ...
 
 
 class StdoutTrace:
@@ -109,6 +121,24 @@ class StdoutTrace:
 
     def log_iteration_cap(self, max_iter: int) -> None:
         self._w(f"[iteration cap hit] {max_iter} iterations consumed without final answer")
+
+    def log_filter_input(self, papers_count: int, interests_chars: int) -> None:
+        self._w(
+            f"--- filter stage --- "
+            f"({papers_count} papers, {interests_chars} chars of interests)"
+        )
+
+    def log_filter_response(self, content: str, reasoning: str | None) -> None:
+        if reasoning:
+            self._w("[filter reasoning]")
+            self._w(reasoning)
+        self._w("[filter response]")
+        self._w(content)
+
+    def log_filter_keepers(self, keepers: list[Any]) -> None:
+        self._w(f"[filter keepers] {len(keepers)} papers")
+        for k in keepers:
+            self._w(f"  - {getattr(k, 'id', '?')}: {getattr(k, 'reason', '?')}")
 
     @staticmethod
     def _w(s: str) -> None:

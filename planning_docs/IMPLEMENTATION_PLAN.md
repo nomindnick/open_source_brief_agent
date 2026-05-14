@@ -301,7 +301,29 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - Filter call is logged to the trace
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/filter.py` with `Keeper`, `FilterResult`, `FilterError`, lenient `parse_filter_response()`, and orchestrator `filter_papers(model, list_markdown, interests)`. `prompts/system_filter.md` instructs the model to return *only* a JSON array, coaches reasons in the user's voice (since they're reused verbatim in 4.1's brief). `memory/io.py` gains `read_interests()`. `cli.py` refactored: `Mission` is now `(name, run: Callable)`, and `paper_survey` runs the deterministic pipeline (list → filter → format) instead of the agent loop. `TraceSink` Protocol + `TraceWriter` + stubs all extended with `log_filter_input`, `log_filter_response`, `log_filter_keepers`. 13 new filter tests.
+>
+> **Acceptance criteria verified on live run (2026-05-14):**
+> - **Parseable JSON output:** 5 keepers extracted cleanly from the model response.
+> - **Rejects negative-interest papers:** filter reasoning in the trace explicitly skipped MulTaBench (multimodal tabular) and AnyFlow (pure CV diffusion) with "Skip (Pure CV)" verdicts.
+> - **Keeps positive-interest papers:** the 5 keepers were MinT (LoRA serving infra), long-context VLM training, MAP-then-Act (agents), Action Guidance RL, and MemReread (agentic memory) — all in stated high-interest areas.
+> - **Filter call logged to trace:** `filter_input`, `filter_response`, `filter_keepers` events visible in JSONL; markdown renders a `## Filter stage` section with reasoning as a blockquote, keepers as a bullet list with user-voice reasons.
+> - Total test suite: **67 passing** (13 new filter tests, all existing tests still green).
+>
+> **One transient hiccup worth noting:** the first live run returned an empty filter response (content + reasoning both 0 chars) — likely an Ollama cold-start flake. A direct repro through `model.complete()` worked immediately, and the next CLI run was clean. Worth keeping an eye on but not chasing.
+>
+> **Cross-model comparison run (qwen3-30b-llamacpp vs qwen3-9b-ollama):** Both backends produced 5 keepers each on today's 50-paper list. **3 of 5 overlapped** (MinT, LVLM long-context, MAP-then-Act — the "obvious" picks). The other 2 differed but stayed in stated interest areas: 9B leaned toward RL + agentic memory; 30B toward many-shot ICL + active retrieval. Implication: the filter prompt is carrying the work, not the model. **The 9B is the right default for the filter stage** — same shape of output, similar quality, ~3× throughput. The 30B is better reserved for orchestrator-style work in future loops 2/3.
+>
+> **Design decisions worth noting:**
+> - **Filter is one-shot, no retry loop.** If the filter's output is unparseable, we tighten `system_filter.md` and re-run. Adding a retry loop would mask prompt drift and inflate token spend on bad prompts. The parser surfaces structural problems (missing `id`, malformed JSON, etc.) with clear messages — these go to the user, not back to the model.
+> - **Filter reasons become user-facing.** Sprint 4.1's brief will display them verbatim under "How I picked these." The prompt explicitly coaches the model to write in the user's voice ("This matters because…", "Worth a read for…"). Today's run produced exactly this register.
+> - **The agent loop is bypassed for paper_survey.** This is the production shape: list and filter are deterministic; 3.3's per-paper read+summarize will also be deterministic. The agent loop survives for `test` and for future loops 2/3 where multi-step decision-making genuinely is needed.
+> - **`Mission.run` is a callable.** Lets agent-loop missions and pipeline missions share one dispatch surface. New missions in 4.1/4.2 just supply a function.
+> - **Trace surface is split into agent-loop events and pipeline-stage events.** Each mission may use only a subset. Sprint 3.3 will add `log_summarize_input/response/result` events for per-paper summaries.
+>
+> **For Sprint 3.3 (per-paper summary):** The filter returns `FilterResult.keepers` — Sprint 3.3 reads each via `HfPapersReadTool().run({"id": k.id})`, then makes a non-agentic summarize call per paper. Output is a structured per-paper summary the brief writer (4.1) consumes. Paper text can be ~120K chars; cap input to the summarizer at e.g. 24K chars (abstract + intro + conclusions) for predictable budget — discussed during the "tool-internal summarization" thread.
+>
+> **For Sprint 4.1 (brief writer):** Filter keepers + their reasons + Sprint 3.3's summaries flow into the brief. The "How I picked these" paragraph uses keeper reasons verbatim. The brief writer is pure Python templating — no LLM call.
 
 ---
 
