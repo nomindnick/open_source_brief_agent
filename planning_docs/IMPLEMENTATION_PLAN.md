@@ -114,7 +114,25 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - Parse errors return a descriptive reason string suitable for sending back to the model
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `prompts/_tool_calling_format.md` (the shared partial that documents the schema for the model — included by reference in every mission's system prompt). `agent/tools/base.py` with `Tool` ABC, `ToolRegistry` (with `render_for_prompt()`), `ToolCall`/`FinalAnswer`/`ParseError` dataclasses. `agent/tools/echo.py` — the stub tool for Sprint 2.2's loop test. `agent/parser.py` with a single `parse()` function returning `ToolCalls | FinalAnswer | ParseError`. End-to-end smoke (parse → registry lookup → tool.run) works.
+>
+> **Acceptance criteria verified:**
+> - 14 parser tests passing (well-formed single call; multiple calls in one response; final-answer block; FA wins over co-occurring tool_use; no-XML fallback to FA; trailing-comma JSON tolerated; unrecoverable JSON → ParseError; JSON-not-an-object → ParseError; missing `<name>`; missing `<input>`; missing closing tag; code-fence-wrapped response; empty `<final_answer>`; batch errors identify the offending block).
+> - Parse error reasons are model-readable and specific. Sampled:
+>   - `<tool_use> block #1 (name='x'): <input> is not valid JSON: Expecting value at line 1 col 1.`
+>   - `<tool_use> block #1 (name='x'): <input> must be a JSON object (got list).`
+>   - `<tool_use> block has no matching </tool_use> closing tag. Make sure every <tool_use> opens and closes.`
+>   - `<final_answer> block is empty.`
+> - Total test suite: 20 passing (14 parser + 6 model regex).
+>
+> **Design decisions worth noting:**
+> - **`ToolCalls` (plural) wraps a `list[ToolCall]`.** The result type is `ToolCalls | FinalAnswer | ParseError` — three siblings, all dataclasses. Pattern-matches cleanly in the loop (Sprint 2.2). The single-call shape was less symmetric.
+> - **FinalAnswer wins over co-occurring tool calls** — documented behavior in `_tool_calling_format.md`. Avoids the loop having to decide "did the model mean to keep going?"
+> - **No-XML response → FinalAnswer fallback.** Same doc. Matches how reasoning models often respond ("here's the answer") when they think they're done. Risk: a model that forgets to call a tool gets treated as done. Mitigation: the system prompt should make this trade-off explicit per mission.
+> - **JSON cleanup is deliberately minimal.** Only trailing-comma removal. Single-quote → double-quote substitution was considered and *rejected* — it would corrupt legitimate strings containing apostrophes. The cost is one extra retry when the model uses single quotes; the alternative was silent data corruption.
+> - **Structural strictness.** `<name>` required, `<input>` required, input must be a JSON object (not list/scalar). These are the structural invariants the loop relies on; surfacing them as parse errors lets the model fix them on the next turn.
+>
+> **For Sprint 2.2 (loop):** The parser never raises. The loop just calls `parse()` and matches on the result type — three cases: execute tool calls, return final answer, or feed the parse-error reason back as the next observation. `ToolRegistry.render_for_prompt()` is ready to be injected as a `{{tools}}` placeholder in mission system prompts. `EchoTool` is the test harness — Sprint 2.2's test mission instructs the model to call it twice and then return a final answer.
 
 ---
 
