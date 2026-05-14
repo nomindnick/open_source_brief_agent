@@ -71,7 +71,24 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - `scripts/benchmark_model.py <profile>` runs end-to-end and produces a summary block usable for comparing models.
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `ModelInterface` Protocol + `ModelResponse` dataclass in `agent/model/base.py`; concrete `LlamaCppModel` and `OllamaModel` adapters; `agent/config.py` with pydantic + pydantic-settings (TOML-only source, `.env` loaded separately via python-dotenv for subprocess tools); `get_model()` factory in `agent/model/__init__.py`. Smoke and benchmark scripts both work.
+>
+> **Acceptance criteria verified on a live run (2026-05-13):**
+> - `qwen3-30b-llamacpp` smoke: content "The capital of France is Paris." Reasoning extracted into `ModelResponse.reasoning` (multi-sentence think block). `<think>` does not appear in `content`. 124 completion tokens reported in usage.
+> - `qwen3-9b-ollama` smoke: same prompt, `message.thinking` pulled into `reasoning`, content clean. 221 completion tokens. Switching profile required only the `--model` flag — no code changes.
+> - Benchmark prompt (asks the model to emit an XML `<tool_use>` block): both profiles passed the format check. qwen3-30b-llamacpp: 11.3 tok/s (25s for 284 tokens). qwen3-9b-ollama: 30.5 tok/s (5.2s for 157 tokens). On Strix Halo the smaller model is meaningfully faster — useful data point for worker-model assignment later.
+> - Bad config exercises: unknown `default_model` → ValidationError with profile list, bad backend literal → ValidationError naming `models.r.backend`, missing config file → FileNotFoundError pointing the user at `config.toml.example`. All clean, no httpx-deep stack traces.
+> - 6 unit tests for `_split_thinking` (the regex that strips `<think>` blocks) pass.
+>
+> **Design decisions worth noting:**
+> - **Sync interface, not async.** SPEC dictates; we discussed the migration path explicitly. If/when we need parallel summarization across two model servers, threading via `ThreadPoolExecutor` is the first move; full async migration is bounded (httpx has identical sync/async APIs, ~20–30 lines of `await` propagation across this codebase).
+> - **TOML is the only source of config values.** Env vars are reserved for secrets consumed by subprocess tools (`HF_TOKEN` later); they don't override config. Keeps "what's set" trivially auditable.
+> - **`ModelBackendError` wraps adapter exceptions.** The agent loop (Sprint 2.2) only has to `except ModelBackendError` — it doesn't have to know about httpx, JSON, or backend-specific failure modes.
+> - **Token-throughput metric.** Time-to-first-token requires streaming; v1 adapters are non-streaming. Reported TTFT as N/A and added wall time + throughput instead. Sprint 2.2/5.1 can revisit if TTFT becomes worth implementing.
+>
+> **For Sprint 2.1 (parser):** The benchmark already showed both models cleanly emit our XML format with a simple prompt. The parser only needs to handle the content string after thinking has been stripped — no `<think>` block edge cases to worry about. The qwen3 reasoning chains sometimes describe the tool call in prose *inside* the think block; this is fine since the parser never sees thinking.
+>
+> **For Sprint 2.2 (loop):** `model.complete()` is sync; the loop is therefore straight imperative Python — no event loop machinery. The benchmark prompt in `scripts/benchmark_model.py` should be replaced with the real test mission once it exists (currently a stub; documented in the script).
 
 ---
 
