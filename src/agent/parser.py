@@ -139,6 +139,18 @@ def parse(model_output: str) -> ParseOutcome:
     """
     text = _strip_code_fence(model_output.strip())
 
+    if not text:
+        # Empty content usually means the model exhausted max_tokens during
+        # reasoning. Treat as a recoverable parse error so the loop can
+        # prompt the model to try again with a more concise response.
+        return ParseError(
+            reason=(
+                "Your previous response was empty. This usually means you spent "
+                "all of your output budget on reasoning. Be more concise in your "
+                "thinking and emit a <tool_use> or <final_answer> block."
+            )
+        )
+
     # Final answer wins. If the model emits both <final_answer> and
     # <tool_use>, we honor the final answer and ignore the tool calls —
     # this matches what we tell the model in _tool_calling_format.md.

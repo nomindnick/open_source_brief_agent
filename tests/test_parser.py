@@ -176,6 +176,14 @@ def test_empty_final_answer_is_parse_error():
     assert "empty" in out.reason.lower()
 
 
+def test_empty_model_response_is_parse_error_not_silent_final_answer():
+    """Empty content = max_tokens exhausted; let the model retry, don't ship empty."""
+    for s in ["", "   ", "\n\n\n"]:
+        out = parse(s)
+        assert isinstance(out, ParseError), f"Expected ParseError for {s!r}, got {out!r}"
+        assert "empty" in out.reason.lower()
+
+
 def test_first_malformed_tool_use_short_circuits_with_useful_reason():
     """When one block in a batch is malformed, error identifies *which* block."""
     out = parse(

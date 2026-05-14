@@ -254,7 +254,30 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - Tool errors (e.g., bad arxiv id) come back as model observations, not exceptions
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/tools/hf_papers.py` with `HfPapersListTool` and `HfPapersReadTool`, both subprocess-wrapping the `hf` CLI. List compresses ~50 papers of raw JSON into a scannable markdown summary (id, title, truncated abstract, upvotes). Read strips the CLI's `Title: / URL Source: / Markdown Content:` preamble and replaces it with a `# <title>` heading. 60s subprocess timeout; never raises (CLI missing, timeout, non-zero exit, bad JSON all fold into `ERROR:` strings the agent can react to). `prompts/system_paper_survey.md` first-pass mission prompt with explicit "do not fake tool results" guardrail addressing the 30B skip-ahead noted in Sprint 2.2. CLI's MISSIONS dict gains `paper_survey`. 18 new unit tests for the tools with mocked subprocess. README updated with `hf` CLI install + auth steps.
+>
+> **Acceptance criteria verified on live run (2026-05-14):**
+> - `hf papers list --date 2026-05-14 --format json` returned 50 papers; tool compressed them to scannable markdown.
+> - Agent (qwen3-9b-ollama) called `hf_papers_list`, then `hf_papers_read` on 5 different papers across 3 turns, then issued a coherent final answer summarizing one of them (FAAST: closed-form associative learning).
+> - **Tool errors handled gracefully:** the agent tried multiple paper IDs that returned `ERROR: ... not found on the Hub` (some papers in the daily-list aren't readable). Each error came back as a model observation; the agent self-corrected and tried different IDs without crashing.
+>
+> **Two changes that landed mid-sprint to make the smoke actually work:**
+> - **Context length raised from 32K → 65K, max_tokens raised from 4K → 8K** in both `config.toml.example` and `config.toml`. The first smoke run blew the context budget: a single full paper read can be 120K chars (~40K tokens), and a too-small `max_tokens` left the model with no output budget after reasoning. This is exactly the user-flagged "we have headroom on 96GB" call. Ollama allocates KV on-demand so no server restart needed there; llama-server users now need `-c 65536` (documented in README).
+> - **Parser hardening: empty content → `ParseError`** (instead of silent empty `FinalAnswer`). Discovered when turn 4 of the first run emitted 13.5K chars of reasoning and 0 chars of content (max_tokens exhausted during reasoning). Previously this would have produced an empty final answer and exited normally; now it surfaces as a parse error so the loop reprompts the model with "be more concise." 1 new test case.
+>
+> **Total test suite: 52 passing** (18 HF tools + 14 parser + 6 model + 6 loop + 8 trace).
+>
+> **Design decisions worth noting:**
+> - **Subprocess, not Python API.** The `hf` CLI surface is more stable than `huggingface_hub`'s Python API across versions, and keeps our dependency tree thin. ~100ms subprocess overhead per call is invisible for an overnight run with ~5–10 reads.
+> - **List output is markdown, not JSON.** The model reads it naturally and references IDs without parsing overhead. Trace.md stays readable.
+> - **Read output cleanup is minimal.** Current `hf` CLI output is already pretty clean — just three preamble lines and the occasional `[image]` stray. The SPEC anticipated worse chrome from older CLI versions; we don't have to do that work today.
+>
+> **A concerning observation Sprint 3.2 needs to address:**
+> Today's smoke read 5 papers totaling ~435K chars (~145K tokens — over 2× our 64K context). Ollama silently truncated earlier history, so the final summary only reflects the most recent paper. The model is "doing the right thing" with the prompt as written (read several, summarize what stood out), but the prompt + free-form selection doesn't bound input size. **This is exactly why Sprint 3.2 introduces the deterministic filter** — a single batched call decides keepers from titles+abstracts (well under 15K tokens), then 3.3 reads only those in full. The current free-form behavior is fine as a Sprint 3.1 smoke; 3.2 fixes it structurally.
+>
+> **For Sprint 3.2 (filter):** The filter call runs OUTSIDE the agent loop as a single non-agentic completion. Input: `Interests.md` + the list-tool's markdown output (~10K tokens). Output: a JSON array of keeper IDs with justifications. No tool calling; lenient JSON parse. The keepers then drive 3.3's per-paper summarization.
+>
+> **For Sprint 3.3 (per-paper summary):** Each keeper gets one read + one non-agentic summary call. Structured per-paper output (TL;DR, why-it-matters, quote-worthy detail, link). The agent loop is then no longer used for the production mission — it's reserved for cases where multi-step reasoning is needed (deferred missions). The from-scratch agent loop work in Phase 2 still pays off as the test harness + the future-mission-engine.
 
 ---
 

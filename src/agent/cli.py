@@ -24,6 +24,7 @@ from agent.model import get_model
 from agent.prompts import load_prompt
 from agent.tools.base import ToolRegistry
 from agent.tools.echo import EchoTool
+from agent.tools.hf_papers import HfPapersListTool, HfPapersReadTool
 from agent.trace.writer import TraceWriter
 
 
@@ -41,6 +42,10 @@ def _build_test_registry() -> ToolRegistry:
     return ToolRegistry([EchoTool()])
 
 
+def _build_paper_survey_registry() -> ToolRegistry:
+    return ToolRegistry([HfPapersListTool(), HfPapersReadTool()])
+
+
 MISSIONS: dict[str, Mission] = {
     "test": Mission(
         name="test",
@@ -50,6 +55,14 @@ MISSIONS: dict[str, Mission] = {
             "Echo the phrase 'hello' first, then echo the phrase 'world'. "
             "Each one is a separate tool call. Then emit a <final_answer> "
             "that quotes both phrases."
+        ),
+    ),
+    "paper_survey": Mission(
+        name="paper_survey",
+        system_prompt_name="system_paper_survey",
+        build_registry=_build_paper_survey_registry,
+        user_task=(
+            "Survey today's HuggingFace Daily Papers and summarize what stood out."
         ),
     ),
 }

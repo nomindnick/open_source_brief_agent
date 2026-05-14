@@ -14,7 +14,25 @@ cd open_source_brief_agent
 uv sync
 ```
 
-This project is pre-MVP. The HuggingFace `hf` CLI, llama.cpp, and Ollama setup steps will be documented in Sprint 5.1; for now, see [CLAUDE.md](CLAUDE.md) for the dev-machine setup.
+### HuggingFace CLI
+
+The agent's primary data source is the `hf papers` CLI subcommand. Install and auth:
+
+```sh
+uv tool install "huggingface_hub[cli]"
+hf auth login              # paste a read-scope token from huggingface.co/settings/tokens
+hf papers list --format json | head    # smoke test
+```
+
+llama.cpp and Ollama setup steps will be documented in Sprint 5.1; for now, see [CLAUDE.md](CLAUDE.md) for the dev-machine setup.
+
+When pointing the llama.cpp profile at a fresh `llama-server`, the server's `-c` flag must match the profile's `context_length` (currently 65536), e.g.:
+
+```sh
+llama-server -m ~/models/.../*.gguf -c 65536 --host 127.0.0.1 --port 8080
+```
+
+Ollama allocates KV cache on demand per request — no server restart needed when bumping `context_length`.
 
 ## Configure
 
