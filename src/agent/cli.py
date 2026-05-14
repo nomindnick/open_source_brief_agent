@@ -14,14 +14,17 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
+from datetime import date as date_cls
+from pathlib import Path
 from typing import Callable
 
 from agent.config import Config, load_config
-from agent.loop import AgentResult, StdoutTrace, run_agent
+from agent.loop import AgentResult, run_agent
 from agent.model import get_model
 from agent.prompts import load_prompt
 from agent.tools.base import ToolRegistry
 from agent.tools.echo import EchoTool
+from agent.trace.writer import TraceWriter
 
 
 @dataclass(frozen=True)
@@ -111,8 +114,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     model = get_model(config, args.model)
-    trace = StdoutTrace()
     max_iter = args.max_iter if args.max_iter is not None else config.iteration_cap
+    profile_name = args.model or config.default_model
+    run_date = date_cls.today().isoformat()
+
+    trace = TraceWriter(
+        traces_root=Path("traces"),
+        date=run_date,
+        mission=mission.name,
+        model_profile=profile_name,
+        max_iter=max_iter,
+    )
 
     try:
         result: AgentResult = run_agent(
@@ -124,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             max_iter=max_iter,
         )
     finally:
+        trace.close()
         close = getattr(model, "close", None)
         if callable(close):
             close()
@@ -134,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         f"hit_cap={result.hit_cap}",
         file=sys.stderr,
     )
+    print(f"agent: trace written to {trace.run_dir}/", file=sys.stderr)
 
     if result.final_answer is not None:
         # Stdout is reserved for the final answer so the caller can pipe it.

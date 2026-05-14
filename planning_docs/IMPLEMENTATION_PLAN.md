@@ -207,7 +207,25 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - `trace.jsonl` parses as valid JSON line-by-line
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/trace/writer.py` with `TraceWriter`, opening line-buffered append-mode handles for both `trace.jsonl` and `trace.md`. JSONL starts with a `meta` event (`trace_schema_version=1`, `agent_version`, date, mission, model_profile, max_iter) and ends with a `close` event. Markdown header lists the same metadata; per-turn sections render reasoning as blockquotes above the model's fenced content. Tool results: full text in JSONL, truncated to ~600 chars in MD with a "truncated — full result in trace.jsonl" marker. Same-day reruns get `-1` / `-2` / … directory suffixes. `cli.py` now allocates a `TraceWriter`, passes it through `run_agent`, closes it in `finally`, and prints the trace path on exit.
+>
+> **Acceptance criteria verified on live run (2026-05-14):**
+> - `--mission test --model qwen3-9b-ollama --max-iter 3` produced `traces/2026-05-14/test/trace.{jsonl,md}`. 10 JSONL events, all parse as valid JSON line-by-line.
+> - `trace.md` reads as a coherent story: model turn → tool call → tool result → next turn → final answer. Reasoning from Qwen renders as multi-line blockquote, content as fenced XML below it (visually subordinate but visible — the SPEC's design intent).
+> - Re-running the same mission immediately landed in `traces/2026-05-14/test-1/`. No overwrite.
+> - 8 new unit tests for the writer (path allocation, meta/close events, line-by-line JSON validity, MD structure, truncation behavior, same-day rerun suffixing, idempotent close, partial-trace survives an unclosed writer). Total suite: 34 passing.
+>
+> **Design decisions worth noting:**
+> - **Line-buffered append (`buffering=1`).** A crash mid-run leaves a usable partial trace on disk — verified in `test_partial_trace_survives_unclosed_writer`. The trace is fsync-pending until close, but reasonably durable.
+> - **Schema version in `meta` event.** Trivial insurance for the day the event shape changes. We can read old traces unambiguously by branching on `trace_schema_version`.
+> - **Markdown truncation, JSONL is canonical.** Tool results from HF papers will be many KB; the MD stays phone-readable while the JSONL keeps everything for later inspection. Truncation marker tells the reader to look there if they need full text.
+> - **UTC timestamps in JSONL, local date in the directory name.** Caller (CLI) passes the date string. UTC inside the events is sortable and unambiguous; the directory uses local-date which matches how briefs will be named (Sprint 4.1).
+> - **`StdoutTrace` retired from CLI.** Removed from the CLI path; the class still exists in `agent/loop.py` for tests/dev that want it. Watching live trace output works via `tail -f traces/<date>/<mission>/trace.md` — cleaner than dual output.
+> - **`TraceWriter.run_dir` exposed as property.** CLI uses it to print the path. Sprint 4.1's brief writer can use it to cross-reference the brief with the trace if useful.
+>
+> **For Sprint 3.1 (HF tools):** Tool wrappers will return paper text (many KB). The MD truncation already handles this gracefully. Worth tagging full-text payloads with sensible delimiters in the tool wrapper so the truncated preview is still informative (e.g. "title: X | abstract: Y..." rather than "&nbsp;...").
+>
+> **For Sprint 4.1 (brief writer):** The trace surface stays separate from the brief surface. Trace goes to `traces/<date>/<mission>/`; brief goes to `<vault_path>/Briefs/<date>.md`. No cross-pollution; both are markdown but with different audiences (trace = me debugging, brief = me reading at breakfast).
 
 ---
 
