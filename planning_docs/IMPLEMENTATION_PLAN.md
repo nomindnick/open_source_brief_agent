@@ -161,7 +161,29 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - The loop's call sites already pass `reasoning` and `content` separately — no retrofit needed in Sprint 2.3
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/loop.py` with `run_agent()`, `AgentResult`, `TraceSink` Protocol, and two stubs (`NoOpTrace` for tests, `StdoutTrace` for interactive debugging). `agent/prompts.py` with `load_prompt()` that auto-injects `{{tool_calling_format}}` from the shared partial and fails loudly on un-filled placeholders. `prompts/system_test.md`. `agent/cli.py` rewritten to dispatch missions; `--mission test` now runs end-to-end. Exit codes: 0 / 1 / 2 for success / cap-hit / setup-error.
+>
+> **Acceptance criteria verified on live runs (2026-05-14):**
+> - `--mission test --model qwen3-9b-ollama --max-iter 3`: 2 iterations, hit_cap=False, final answer `'The two phrases echoed were "hello" and "world".'` Both echo calls executed; observation fed back; final answer emitted.
+> - `--mission test --model qwen3-30b-llamacpp --max-iter 3`: 1 iteration (!) — the 30B model emitted both tool calls AND the final_answer in a single turn, and per the parser's FA-wins convention, the echo calls were never executed (the model hallucinated their results). For the echo test this is fine; for real tools we'll want the system prompt to discourage this skip-ahead. Logged here so Sprint 3.1's paper_survey prompt can address it explicitly.
+> - `--max-iter 1` with the same mission: hit_cap=True, exit code 1, cap-hit message printed to stderr. Verified the loop bails cleanly.
+> - Trace stub printed every event boundary: model turn (content + reasoning separately), tool call, tool result, final answer. The same surface (`log_model_turn(content, reasoning)`, `log_tool_call`, `log_tool_result`, `log_parse_error`, `log_final_answer`, `log_iteration_cap`) is what Sprint 2.3's real writer will implement — no loop changes needed there.
+>
+> **Plus a bug found and fixed:** `__main__.py` was calling `main()` without propagating its exit code. Fixed with `raise SystemExit(main())`. Discovered because the cap-hit exit code was 0 instead of 1 in the first test run.
+>
+> **Six new loop tests** added (`tests/test_loop.py`) using a `ScriptedModel` mock. Covers cases hard to trigger deterministically against a real model: parse-error feedback, unknown-tool feedback, tool-exception containment, iteration cap exhaustion, and final-answer-beats-co-occurring-tool-call. Total suite: 26 passing.
+>
+> **Design decisions worth noting:**
+> - **Sequential tool execution.** Multiple `<tool_use>` blocks in one turn run in order. Parallel execution deferred; would matter once HF tools are doing real I/O. Sequential is simpler, more debuggable, and matches the trace's chronological narrative.
+> - **Observations are user-role messages, not tool-role.** Works across both backends without backend-specific quirks. Prefixed with `"Result of tool 'X':"` so the model knows what it's looking at.
+> - **Unknown tool is a *observation*, not a `ParseError`.** The parse succeeded — the model called something that doesn't exist. Surfaced as `"Tool 'X' is not available. Available tools: [...]."` so the model can recover.
+> - **Tool exceptions are contained.** Per `Tool` ABC contract tools shouldn't raise, but if they do, the error becomes an observation rather than crashing the run.
+> - **Cap-hit returns `final_answer=None, hit_cap=True`**, not a best-effort answer. The CLI (and later orchestrators) decide whether to salvage partial work. Defaults to skipping any output write.
+> - **`TraceSink` is a Protocol.** Sprint 2.3's `TraceWriter` implements it. The loop never imports the real writer — keeps the trace module separable.
+>
+> **For Sprint 2.3 (trace writer):** The loop already calls every method with the right shape. Sprint 2.3 just builds `TraceWriter(date, mission)` that opens `traces/YYYY-MM-DD/<mission>/trace.{jsonl,md}` on init and implements those methods to append events. No loop changes.
+>
+> **For Sprint 3.1 (HF tools + first real mission):** The `Mission` dataclass in cli.py is the dispatch shape — adding `paper_survey` is one entry. The new mission's system prompt should explicitly tell the model "do not emit `<final_answer>` until you have observed actual tool results" to avoid the 30B-style skip-ahead.
 
 ---
 
