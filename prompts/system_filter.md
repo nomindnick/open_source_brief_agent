@@ -10,6 +10,12 @@ Favor papers in the user's high-interest areas. Down-weight or skip papers in th
 
 {{interests}}
 
+## What you noticed yesterday
+
+(May be empty on the first run, or if no prior reflection exists. When present, use it to weight today's picks — your own most recent thoughts on what's been high signal vs noise.)
+
+{{recent_reflection}}
+
 ## Today's paper list
 
 {{papers}}

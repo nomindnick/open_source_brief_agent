@@ -22,11 +22,18 @@ from typing import Callable
 
 from agent.brief.writer import check_vault_writable, render_brief, write_brief
 from agent.config import Config, load_config
-from agent.filter import FilterError, filter_papers
+from agent.filter import FilterError, exclude_seen_papers, filter_papers
 from agent.loop import AgentResult, TraceSink, run_agent
-from agent.memory.io import read_interests
+from agent.memory.io import (
+    append_seen_ids,
+    read_interests,
+    read_latest_reflection,
+    read_seen_ids,
+    write_reflection,
+)
 from agent.model import get_model
 from agent.prompts import load_prompt
+from agent.reflect import reflect_on_brief
 from agent.summarize import PaperSummary, summarize_keepers
 from agent.tools.base import ToolRegistry
 from agent.tools.echo import EchoTool
@@ -94,21 +101,30 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     run_date = args.date  # set by main() from local date
 
     # ── Stage 1: list (deterministic subprocess) ──
-    papers_md = HfPapersListTool().run({})
-    if papers_md.startswith("ERROR"):
-        print(papers_md, file=sys.stderr)
+    papers_md_full = HfPapersListTool().run({})
+    if papers_md_full.startswith("ERROR"):
+        print(papers_md_full, file=sys.stderr)
         return AgentResult(final_answer=None, iterations=0, hit_cap=False)
 
+    # ── Stage 1b: Seen.md dedup (deterministic, pre-LLM) ──
+    # Strictly less than today: same-day reruns DO see yesterday's IDs
+    # (useful when iterating); cross-day they don't.
+    seen_ids = read_seen_ids(before_date=run_date)
+    papers_md, dropped = exclude_seen_papers(papers_md_full, seen_ids)
+    trace.log_seen_filter(dropped=dropped, total_seen=len(seen_ids))
     papers_count = _count_papers_in_listing(papers_md)
 
     # ── Stage 2: filter (non-agentic LLM call) ──
     interests = read_interests()
+    recent_reflection = read_latest_reflection(before_date=run_date) or ""
     trace.log_filter_input(papers_count=papers_count, interests_chars=len(interests))
 
     model = get_model(config, args.model)
     try:
         try:
-            result = filter_papers(model, papers_md, interests)
+            result = filter_papers(
+                model, papers_md, interests, recent_reflection=recent_reflection
+            )
         except FilterError as e:
             print(f"agent: filter failed: {e}", file=sys.stderr)
             trace.log_filter_response("", None)
@@ -141,6 +157,7 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
             papers_total=papers_count,
         )
         print(f"agent: --dry-run — brief NOT written to vault", file=sys.stderr)
+        print(f"agent: --dry-run — Seen.md and Reflections NOT updated", file=sys.stderr)
         return AgentResult(final_answer=body, iterations=1, hit_cap=False)
 
     brief_path = write_brief(
@@ -152,6 +169,47 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
         papers_total=papers_count,
     )
     print(f"agent: brief written to {brief_path}", file=sys.stderr)
+
+    # ── Stage 5: memory write-back (Sprint 4.2) ──
+    # Append SUMMARIZED ids only (per plan: "only ones that made the
+    # brief"). Skipped keepers don't get marked as seen — we may try
+    # them again tomorrow.
+    summarized_ids = [s.id for s in summaries]
+    if summarized_ids:
+        append_seen_ids(summarized_ids, run_date)
+
+    # Reflection: only run if we actually produced summaries; reflecting
+    # on an empty brief is wasted compute.
+    if summaries:
+        brief_md = brief_path.read_text(encoding="utf-8")
+        trace.log_reflection_input(
+            brief_chars=len(brief_md), interests_chars=len(interests)
+        )
+        reflect_model = get_model(config, args.model)
+        try:
+            try:
+                ref = reflect_on_brief(
+                    reflect_model,
+                    date=run_date,
+                    summaries=summaries,
+                    keepers=result.keepers,
+                    model_profile=profile_name,
+                    papers_total=papers_count,
+                    interests=interests,
+                )
+                trace.log_reflection_output(
+                    ref.content, ref.response.reasoning
+                )
+                refl_path = write_reflection(run_date, ref.content)
+                print(f"agent: reflection written to {refl_path}", file=sys.stderr)
+            except Exception as e:  # noqa: BLE001 — reflection is best-effort
+                print(
+                    f"agent: reflection failed (non-fatal): {type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+        finally:
+            _close_quietly(reflect_model)
+
     # Stdout: a one-liner pointer to the file so callers can pipe.
     return AgentResult(final_answer=str(brief_path), iterations=1, hit_cap=False)
 
@@ -207,6 +265,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run everything except writing to the Obsidian vault.",
     )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help=(
+            "Override the run date (YYYY-MM-DD). Useful for replaying a "
+            "specific day's papers and for simulating successive-day runs "
+            "in testing. Default: system local date."
+        ),
+    )
     return parser
 
 
@@ -229,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mission = MISSIONS[args.mission]
     profile_name = args.model or config.default_model
-    run_date = date_cls.today().isoformat()
+    run_date = args.date or date_cls.today().isoformat()
     args.date = run_date  # passed through to mission runners
     max_iter = args.max_iter if args.max_iter is not None else config.iteration_cap
 

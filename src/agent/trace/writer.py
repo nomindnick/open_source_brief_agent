@@ -280,6 +280,44 @@ class TraceWriter:
         self._write_md(f"---\n\n## Summary: `{paper_id}` (skipped)\n\n")
         self._write_md(f"_Reason: {reason}_\n\n")
 
+    # ── memory pipeline (Sprint 4.2) ───────────────────────────────────
+
+    def log_seen_filter(self, dropped: int, total_seen: int) -> None:
+        self._write_jsonl_event(
+            "seen_filter",
+            dropped=dropped,
+            total_seen=total_seen,
+        )
+        if dropped or total_seen:
+            self._write_md(
+                f"---\n\n## Seen-paper dedup\n\n"
+                f"- **Dropped from today's list:** {dropped}\n"
+                f"- **Total IDs in Seen.md:** {total_seen}\n\n"
+            )
+
+    def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None:
+        self._write_jsonl_event(
+            "reflection_input",
+            brief_chars=brief_chars,
+            interests_chars=interests_chars,
+        )
+        self._write_md(
+            f"---\n\n## Reflection stage\n\n"
+            f"- **Brief size:** {brief_chars} chars\n"
+            f"- **Interests size:** {interests_chars} chars\n\n"
+        )
+
+    def log_reflection_output(self, content: str, reasoning: str | None) -> None:
+        self._write_jsonl_event(
+            "reflection_output",
+            content=content,
+            reasoning=reasoning,
+        )
+        if reasoning:
+            quoted = "\n".join(f"> {line}" if line else ">" for line in reasoning.splitlines())
+            self._write_md(f"> **Reflection reasoning**\n>\n{quoted}\n\n")
+        self._write_md(f"```\n{content}\n```\n\n")
+
     def close(self) -> None:
         if self._closed:
             return

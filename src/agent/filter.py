@@ -26,6 +26,11 @@ from typing import Any
 from agent.model.base import ModelInterface, ModelResponse
 from agent.prompts import load_prompt
 
+# Matches the start of a paper section in HfPapersListTool output:
+# "## <id> (N upvotes)\n" or "## <id> (no upvotes)\n".
+_PAPER_SECTION_START_RE = re.compile(r"^## (\S+) \(.*?\)$", re.MULTILINE)
+_LIST_HEADER_RE = re.compile(r"^# HuggingFace Papers — \d+ result\(s\)", re.MULTILINE)
+
 
 @dataclass(frozen=True)
 class Keeper:
@@ -141,10 +146,64 @@ def parse_filter_response(content: str) -> list[Keeper]:
     return keepers
 
 
+def exclude_seen_papers(
+    list_markdown: str,
+    seen_ids: set[str],
+) -> tuple[str, int]:
+    """Drop ``## <id> ...`` sections whose id appears in ``seen_ids``.
+
+    Operates on :class:`HfPapersListTool` output. Updates the leading
+    ``# HuggingFace Papers — N result(s)`` header so the count the
+    LLM sees matches the post-filter list.
+
+    Returns:
+        ``(rewritten_markdown, dropped_count)``. ``dropped_count`` is
+        purely the number of papers we deterministically removed — the
+        LLM never sees Seen.md and doesn't reason about dedup.
+    """
+    if not seen_ids:
+        return list_markdown, 0
+
+    # Find every paper section's start position and id.
+    matches = list(_PAPER_SECTION_START_RE.finditer(list_markdown))
+    if not matches:
+        return list_markdown, 0
+
+    # Anchor the spans: each section runs from its `## <id>` line
+    # up to the next `## ` (or end of text).
+    spans: list[tuple[int, int, str]] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(list_markdown)
+        pid = m.group(1)
+        spans.append((start, end, pid))
+
+    keep_parts: list[str] = [list_markdown[: spans[0][0]]]
+    dropped = 0
+    for start, end, pid in spans:
+        if pid in seen_ids:
+            dropped += 1
+            continue
+        keep_parts.append(list_markdown[start:end])
+
+    rewritten = "".join(keep_parts)
+    if dropped:
+        # Update the header count so the LLM doesn't see "50 results" with
+        # 45 sections; otherwise the prompt becomes confusing.
+        remaining = len(matches) - dropped
+        rewritten = _LIST_HEADER_RE.sub(
+            f"# HuggingFace Papers — {remaining} result(s)",
+            rewritten,
+            count=1,
+        )
+    return rewritten, dropped
+
+
 def filter_papers(
     model: ModelInterface,
     list_markdown: str,
     interests: str,
+    recent_reflection: str = "",
 ) -> FilterResult:
     """Run the filter stage: pick keepers from the day's paper list.
 
@@ -167,6 +226,7 @@ def filter_papers(
         "system_filter",
         interests=interests,
         papers=list_markdown,
+        recent_reflection=recent_reflection,
     )
     response = model.complete([{"role": "user", "content": user_prompt}])
     keepers = parse_filter_response(response.content)

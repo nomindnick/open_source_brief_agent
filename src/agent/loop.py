@@ -75,6 +75,11 @@ class TraceSink(Protocol):
     def log_summarize_result(self, summary: Any) -> None: ...
     def log_summarize_skipped(self, paper_id: str, reason: str) -> None: ...
 
+    # ── memory pipeline (Sprint 4.2) ───────────────────────────────────
+    def log_seen_filter(self, dropped: int, total_seen: int) -> None: ...
+    def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None: ...
+    def log_reflection_output(self, content: str, reasoning: str | None) -> None: ...
+
 
 class NoOpTrace:
     """A trace sink that drops every event. For tests."""
@@ -91,6 +96,9 @@ class NoOpTrace:
     def log_summarize_input(self, paper_id: str, char_count: int) -> None: ...
     def log_summarize_result(self, summary: Any) -> None: ...
     def log_summarize_skipped(self, paper_id: str, reason: str) -> None: ...
+    def log_seen_filter(self, dropped: int, total_seen: int) -> None: ...
+    def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None: ...
+    def log_reflection_output(self, content: str, reasoning: str | None) -> None: ...
 
 
 class StdoutTrace:
@@ -157,6 +165,19 @@ class StdoutTrace:
 
     def log_summarize_skipped(self, paper_id: str, reason: str) -> None:
         self._w(f"[summary skipped] {paper_id}: {reason}")
+
+    def log_seen_filter(self, dropped: int, total_seen: int) -> None:
+        self._w(f"[seen filter] dropped {dropped} papers (Seen.md has {total_seen} ids)")
+
+    def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None:
+        self._w(f"--- reflection --- ({brief_chars} chars of brief, {interests_chars} chars of interests)")
+
+    def log_reflection_output(self, content: str, reasoning: str | None) -> None:
+        if reasoning:
+            self._w("[reflection reasoning]")
+            self._w(reasoning)
+        self._w("[reflection]")
+        self._w(content)
 
     @staticmethod
     def _w(s: str) -> None:

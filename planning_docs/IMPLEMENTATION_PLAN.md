@@ -455,7 +455,22 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - The next run's filter system prompt visibly includes the previous reflection (check the trace)
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/memory/io.py` extended with `read_seen_ids(before_date=...)`, `append_seen_ids`, `write_reflection`, `read_latest_reflection(before_date=...)`. The `before_date` knob implements the "strictly less than today" dedup window so same-day reruns don't deduplicate. `agent/filter.py` gains `exclude_seen_papers(list_markdown, seen_ids) -> (rewritten, dropped_count)` — deterministic pre-filter that drops `## <id>` sections and updates the list header count; runs before the LLM and never costs tokens. `system_filter.md` gains a `{{recent_reflection}}` placeholder; `agent/reflect.py` runs the end-of-run reflection LLM call. `prompts/system_reflection.md` produces 3–6 sentence plain-markdown reflections in the agent's first-person-to-future-self voice. `TraceSink` extended with `log_seen_filter`, `log_reflection_input`, `log_reflection_output`. CLI's `_run_paper_survey` wires all of it end-to-end; memory writes are skipped in `--dry-run`. Also added `--date YYYY-MM-DD` CLI flag for replay/testing.
+>
+> **Acceptance criteria verified on live run (2026-05-15) with pre-populated yesterday state:**
+> - **Yesterday's keepers don't re-surface.** Seen.md was pre-populated with 5 IDs dated 2026-05-14. Today's run logged `seen_filter: dropped=5, total_seen=5` — exact match. The LLM saw 45 papers (50 - 5 dedup'd) instead of 50. Today's 5 keepers are entirely new IDs.
+> - **Reflection is non-trivial.** 776 chars; mentions specific paper IDs (2605.13880, 2605.13941, 2605.14392), specific findings ("25.7% gains on LoCoMo"), dominant theme summary, and forward-looking guidance ("you'll want to weight up the environment synthesis angle tomorrow"). Far above the "3 sentences + specific themes" bar.
+> - **Filter visibly absorbed yesterday's reflection.** Filter reasoning content stats: "yesterday" mentioned 5×, "KV cache" 22× (yesterday said up-weight inference systems), "self-distillation" 11× (yesterday said lean away — model deliberated and excluded those), "up-weight" 2× (terminology lifted from yesterday's reflection). Today's keepers shifted territory toward agent memory + environment synthesis, away from RL/distillation — exactly the directional change yesterday's reflection recommended.
+> - 108 → 122 tests passing (14 new memory tests). All green.
+>
+> **Design decisions worth noting:**
+> - **`before_date` parameter on both `read_seen_ids` and `read_latest_reflection`.** The same "strictly less than today" rule covers both. Same-day reruns: don't dedupe (you're iterating on prompts), don't read your own just-written reflection.
+> - **Only summarized IDs go into Seen.md.** Skipped keepers don't get marked — we may want to retry them tomorrow if the paper becomes available. Matches the SPEC's "only ones that made the brief" guidance.
+> - **Reflection sees the rendered brief markdown, not the structured data.** Same input the user reads. Avoids the model reacting to fields the user can't see (or vice versa). Sprint 4.1's `render_brief` is reused — single source of truth.
+> - **Reflection is best-effort.** Wrapped in try/except so a failure doesn't break the run (the brief is the load-bearing output; the reflection is for tomorrow). Errors print to stderr and pipeline continues.
+> - **Header count in the dedup'd list is updated** (`# HuggingFace Papers — 45 result(s)` instead of `50`). Otherwise the prompt would tell the LLM "50 papers" while showing 45, which is confusing and degrades filter quality.
+>
+> **For Sprint 5.1 (polish + MVP):** Phase 4 is done — the agent now reads memory at run start and writes back at run end, with the loop closed visibly via the filter reasoning. Remaining work: move hard-coded values (timeouts, truncation caps, model temperatures per stage) to config.toml; expand README with full setup; write TROUBLESHOOTING.md; ship an MVP smoke run from a fresh terminal. The user-feedback-in-brief and memory-compaction ideas are in SPEC § Future Considerations for post-MVP.
 
 ---
 
