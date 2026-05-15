@@ -105,6 +105,40 @@ uv run python -m agent --mission test
 
 A typical run takes ~15 minutes on a 9B Ollama model: filter (~3 min) + 5 summaries × ~2 min each. Long enough that you'll want to run it once before sleep, not at the breakfast table.
 
+### Schedule overnight runs (systemd timer)
+
+Linux only. Generates and installs systemd **user units** so the agent fires at a fixed time daily:
+
+```sh
+./scripts/systemd/install.sh           # default: 01:00 daily
+./scripts/systemd/install.sh 03:30     # custom HH:MM
+./scripts/systemd/install.sh --uninstall
+```
+
+The script:
+
+- Generates `brief-agent.service` and `brief-agent.timer` under `~/.config/systemd/user/` with the right paths for your machine.
+- Validates the unit files via `systemd-analyze --user verify`.
+- Runs `daemon-reload` and `enable --now` so the timer starts immediately.
+- Warns if Ollama isn't enabled (so it'd be down at fire time) or if `config.toml` is missing.
+- Prints the next firing time on success.
+
+**One manual step the script can't do for you:**
+
+```sh
+sudo loginctl enable-linger $USER
+```
+
+Without this, user services stop when you log out, and the overnight run won't fire if you've logged out of your desktop. The script reminds you if you haven't run this.
+
+**Test before bed:**
+
+```sh
+systemctl --user start brief-agent.service           # fires the real 15-min run
+journalctl --user -u brief-agent.service -f          # watch progress
+systemctl --user list-timers brief-agent.timer       # confirm next firing
+```
+
 ### Where output lands
 
 - **Brief:** `<vault_path>/Briefs/<date>.md`. Same-day reruns become `<date>-run-2.md`, `-run-3.md`, etc. — no overwrites.
