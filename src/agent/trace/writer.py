@@ -232,6 +232,54 @@ class TraceWriter:
             self._write_md(f"- `{k['id']}` — {k['reason']}\n")
         self._write_md("\n")
 
+    # ── summarize stage (Sprint 3.3) ───────────────────────────────────
+
+    def log_summarize_input(self, paper_id: str, char_count: int) -> None:
+        self._write_jsonl_event(
+            "summarize_input",
+            paper_id=paper_id,
+            char_count=char_count,
+        )
+        # Markdown header for this paper's summary subsection.
+        self._write_md(f"---\n\n## Summary: `{paper_id}`\n\n")
+        self._write_md(f"_Input: {char_count} chars of paper text._\n\n")
+
+    def log_summarize_result(self, summary: Any) -> None:
+        # Accept either a PaperSummary dataclass or a dict.
+        def g(field: str) -> Any:
+            return (
+                getattr(summary, field, None)
+                if not isinstance(summary, dict)
+                else summary.get(field)
+            )
+
+        record = {
+            "id": g("id"),
+            "title": g("title"),
+            "tldr": g("tldr"),
+            "why_it_matters": g("why_it_matters"),
+            "quote": g("quote"),
+            "link": g("link"),
+            "filter_reason": g("filter_reason"),
+        }
+        self._write_jsonl_event("summarize_result", **record)
+
+        self._write_md(f"**{record['title']}**\n\n")
+        self._write_md(f"**TL;DR:** {record['tldr']}\n\n")
+        self._write_md(f"**Why it matters:** {record['why_it_matters']}\n\n")
+        if record["quote"]:
+            self._write_md(f"> {record['quote']}\n\n")
+        self._write_md(f"[{record['id']}]({record['link']})\n\n")
+
+    def log_summarize_skipped(self, paper_id: str, reason: str) -> None:
+        self._write_jsonl_event(
+            "summarize_skipped",
+            paper_id=paper_id,
+            reason=reason,
+        )
+        self._write_md(f"---\n\n## Summary: `{paper_id}` (skipped)\n\n")
+        self._write_md(f"_Reason: {reason}_\n\n")
+
     def close(self) -> None:
         if self._closed:
             return

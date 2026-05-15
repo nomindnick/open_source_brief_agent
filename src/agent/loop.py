@@ -70,6 +70,11 @@ class TraceSink(Protocol):
     def log_filter_response(self, content: str, reasoning: str | None) -> None: ...
     def log_filter_keepers(self, keepers: list[Any]) -> None: ...
 
+    # ── summarize stage (Sprint 3.3) ───────────────────────────────────
+    def log_summarize_input(self, paper_id: str, char_count: int) -> None: ...
+    def log_summarize_result(self, summary: Any) -> None: ...
+    def log_summarize_skipped(self, paper_id: str, reason: str) -> None: ...
+
 
 class NoOpTrace:
     """A trace sink that drops every event. For tests."""
@@ -83,6 +88,9 @@ class NoOpTrace:
     def log_filter_input(self, papers_count: int, interests_chars: int) -> None: ...
     def log_filter_response(self, content: str, reasoning: str | None) -> None: ...
     def log_filter_keepers(self, keepers: list[Any]) -> None: ...
+    def log_summarize_input(self, paper_id: str, char_count: int) -> None: ...
+    def log_summarize_result(self, summary: Any) -> None: ...
+    def log_summarize_skipped(self, paper_id: str, reason: str) -> None: ...
 
 
 class StdoutTrace:
@@ -139,6 +147,16 @@ class StdoutTrace:
         self._w(f"[filter keepers] {len(keepers)} papers")
         for k in keepers:
             self._w(f"  - {getattr(k, 'id', '?')}: {getattr(k, 'reason', '?')}")
+
+    def log_summarize_input(self, paper_id: str, char_count: int) -> None:
+        self._w(f"--- summarize {paper_id} --- ({char_count} chars of paper text)")
+
+    def log_summarize_result(self, summary: Any) -> None:
+        self._w(f"[summary] {getattr(summary, 'id', '?')}: {getattr(summary, 'title', '?')}")
+        self._w(f"  tldr: {getattr(summary, 'tldr', '?')}")
+
+    def log_summarize_skipped(self, paper_id: str, reason: str) -> None:
+        self._w(f"[summary skipped] {paper_id}: {reason}")
 
     @staticmethod
     def _w(s: str) -> None:

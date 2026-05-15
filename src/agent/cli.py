@@ -26,6 +26,7 @@ from agent.loop import AgentResult, TraceSink, run_agent
 from agent.memory.io import read_interests
 from agent.model import get_model
 from agent.prompts import load_prompt
+from agent.summarize import PaperSummary, summarize_keepers
 from agent.tools.base import ToolRegistry
 from agent.tools.echo import EchoTool
 from agent.tools.hf_papers import HfPapersListTool, HfPapersReadTool
@@ -110,18 +111,55 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     trace.log_filter_response(result.response.content, result.response.reasoning)
     trace.log_filter_keepers(result.keepers)
 
-    # ── Stage 3 (Sprint 3.3 will replace this): summarize keepers ──
-    # For now, emit a provisional "final answer" listing the keepers
-    # and their reasons. This is what the brief writer will consume
-    # in Sprint 4.1.
+    # ── Stage 3: per-paper read + summary (Sprint 3.3) ──
+    # The same model handles summaries for now. summarize_keepers
+    # opens its own model session not needed — we reuse the existing
+    # model instance via a freshly built one for clean separation.
     if not result.keepers:
         body = "Nothing on today's list met the bar.\n"
-    else:
-        lines = [f"Keepers from today's papers ({len(result.keepers)}):\n"]
-        for k in result.keepers:
-            lines.append(f"- **{k.id}** — {k.reason}")
-        body = "\n".join(lines) + "\n"
+        return AgentResult(final_answer=body, iterations=1, hit_cap=False)
+
+    summary_model = get_model(config, args.model)
+    try:
+        summaries = summarize_keepers(summary_model, result.keepers, trace=trace)
+    finally:
+        _close_quietly(summary_model)
+
+    # ── Provisional output (Sprint 4.1 replaces this with Obsidian write) ──
+    body = _format_summaries_for_stdout(result.keepers, summaries)
     return AgentResult(final_answer=body, iterations=1, hit_cap=False)
+
+
+def _format_summaries_for_stdout(
+    keepers: list,
+    summaries: list[PaperSummary],
+) -> str:
+    """Render summaries as markdown for the CLI's stdout output.
+
+    Sprint 4.1's brief writer will produce a richer version of this for
+    the Obsidian vault. This function exists so 3.3 has a useful end-to-
+    end output without depending on 4.1.
+    """
+    lines: list[str] = []
+    lines.append(f"# Today's brief — {len(summaries)}/{len(keepers)} papers summarized\n")
+
+    if not summaries:
+        lines.append("(No papers survived the summarize stage — see trace for skips.)\n")
+        return "\n".join(lines)
+
+    for s in summaries:
+        lines.append(f"## {s.title}")
+        lines.append(f"_{s.id}_ — [link]({s.link})\n")
+        lines.append(f"**TL;DR:** {s.tldr}\n")
+        lines.append(f"**Why it matters:** {s.why_it_matters}\n")
+        if s.quote:
+            lines.append(f"> {s.quote}\n")
+
+    if len(summaries) < len(keepers):
+        lines.append(
+            f"\n_({len(keepers) - len(summaries)} keeper(s) skipped — see trace.)_"
+        )
+    return "\n".join(lines) + "\n"
 
 
 # ── Mission registry ───────────────────────────────────────────────────

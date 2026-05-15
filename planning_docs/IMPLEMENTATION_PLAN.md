@@ -345,7 +345,30 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - Summarization failures (model produces garbage, paper read fails) degrade gracefully — partial brief is better than no brief
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/summarize.py` with `PaperSummary` dataclass, `parse_summary_response` (lenient JSON extraction, strict-first then regex fallback), `summarize_keeper` (one-paper call), and `summarize_keepers` (orchestrator). `prompts/system_summarize.md` produces JSON `{title, tldr, why_it_matters, quote}`. `cli.py`'s `_run_paper_survey` now runs the full pipeline (list → filter → summarize) and renders a markdown summary list for stdout (replaced by Obsidian write in 4.1). `TraceSink` Protocol + writer extended with `log_summarize_input`, `log_summarize_result`, `log_summarize_skipped`. 14 new summarize tests.
+>
+> **Acceptance criteria verified on live run (2026-05-14):**
+> - **Coherent summary per keeper:** 4/5 keepers produced substantive summaries (1 failed at the read stage, see below). Each has TL;DR in user-voice, ~2-sentence "why it matters" referencing specific user interests, and a verbatim quote with concrete numbers (e.g. *"+3.9 points at 4B and +3.6 points at 8B on SWE-bench Verified"* from the DAgger paper).
+> - **Length matches the brief format:** Each summary is 4–8 sentences plus link, exactly the phone-readable size we designed for.
+> - **Graceful degradation works:** 2605.13779 (MinT) failed at `hf papers read` with "not found on the Hub" (same flake seen in Sprint 3.1 — some IDs from the daily list aren't actually readable). The orchestrator logged `summarize_skipped` to the trace and continued with the next keeper. The 4 remaining summaries proceeded normally; the user gets a partial brief instead of no brief.
+>
+> **Trace markdown shows the full narrative.** Filter section → 4 per-paper summary sections + 1 skipped section. The skipped section makes the failure visible (not silenced).
+>
+> **Operational notes:**
+> - Same Ollama cold-start flake from Sprint 3.2 hit again on the first attempt — filter returned empty content. Re-running cleanly succeeded. Worth a debugging pass at Sprint 5.1; possibly related to Ollama's KV cache being unloaded between requests.
+> - Total wall time for the full pipeline: ~10 minutes (filter ~3.5 min reasoning, 4 summaries × ~1.5 min each). For an overnight run this is well within budget.
+> - 81 → 95 tests passing (14 new summarize tests, all existing tests still green).
+>
+> **Design decisions worth noting:**
+> - **Two-pass JSON parsing (strict then regex).** Caught a real bug in testing — the original regex-only approach silently extracted the first `{...}` from a `[{...}]` response, accepting malformed structure. Strict-first means well-formed responses parse cleanly; regex fallback handles models that add prose preamble.
+> - **`quote` field is optional, never paraphrased.** The prompt explicitly says "return null if no clean verbatim sentence stands out — do not paraphrase." Today's run delivered: all 4 quotes look verbatim and carry concrete numbers/claims. Worth a post-hoc check in 5.1 (string-search quotes against paper text) but not required.
+> - **Max chars = 24K (~8K tokens).** First-N-chars truncation; abstract+intro+early sections in practice. Smarter section-aware extraction is deferred. Today's runs used the full 24K budget on every paper without complaint.
+> - **Skipped papers are visible, not silent.** The `summarize_skipped` event renders a clear `## Summary: <id> (skipped)` block in trace.md with the reason. User sees what was attempted and why it failed.
+> - **The `quote` is the highest-value field per summary.** The "+3.9 / +3.6 points" line in the DAgger summary is exactly what a morning brief should preserve — a number you'd remember. Worth more prompt iteration in 5.1 to make this consistent.
+>
+> **For Sprint 4.1 (brief writer):** `summarize_keepers` returns `list[PaperSummary]` — the brief writer's only input. The provisional stdout renderer in `cli.py:_format_summaries_for_stdout` is the rough shape; 4.1 makes it production: writes to `<vault_path>/Briefs/YYYY-MM-DD.md`, adds frontmatter (date, paper count, model used), adds the "How I picked these" paragraph drawn from filter reasons, handles same-day rerun suffix.
+>
+> **For Sprint 4.2 (memory):** `Seen.md` dedup should run *before* the filter, not after — we want yesterday's keepers excluded from the filter's input list entirely, not skipped after the filter chooses them. Sprint 3.2's filter already takes `interests` as input; same pattern, just add `seen_ids` and exclude in the list-pre-format step.
 
 ---
 
