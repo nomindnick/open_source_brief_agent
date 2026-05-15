@@ -20,6 +20,7 @@ from datetime import date as date_cls
 from pathlib import Path
 from typing import Callable
 
+from agent.brief.writer import check_vault_writable, render_brief, write_brief
 from agent.config import Config, load_config
 from agent.filter import FilterError, filter_papers
 from agent.loop import AgentResult, TraceSink, run_agent
@@ -79,14 +80,22 @@ def _count_papers_in_listing(list_markdown: str) -> int:
 def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink) -> AgentResult:
     """Daily-papers mission — deterministic pipeline, not the agent loop.
 
-    Sprint 3.2 implements list → filter; Sprint 3.3 adds per-paper
-    read+summarize; Sprint 4.1 writes the brief to Obsidian.
+    Pipeline: list → filter → per-paper read+summarize → write brief to
+    Obsidian vault (or stdout in ``--dry-run``).
     """
+    # ── Pre-flight: vault must be writable before we spend 10 min on summaries ──
+    if not args.dry_run:
+        try:
+            check_vault_writable(config.vault_path)
+        except (FileNotFoundError, NotADirectoryError, PermissionError) as e:
+            print(f"agent: {e}", file=sys.stderr)
+            return AgentResult(final_answer=None, iterations=0, hit_cap=False)
+
+    run_date = args.date  # set by main() from local date
+
     # ── Stage 1: list (deterministic subprocess) ──
     papers_md = HfPapersListTool().run({})
     if papers_md.startswith("ERROR"):
-        # Surface the CLI's error as a "final answer" so the user sees it
-        # in the trace + stdout, but mark as no-real-answer via empty result.
         print(papers_md, file=sys.stderr)
         return AgentResult(final_answer=None, iterations=0, hit_cap=False)
 
@@ -111,55 +120,40 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     trace.log_filter_response(result.response.content, result.response.reasoning)
     trace.log_filter_keepers(result.keepers)
 
-    # ── Stage 3: per-paper read + summary (Sprint 3.3) ──
-    # The same model handles summaries for now. summarize_keepers
-    # opens its own model session not needed — we reuse the existing
-    # model instance via a freshly built one for clean separation.
+    # ── Stage 3: per-paper read + summary ──
     if not result.keepers:
-        body = "Nothing on today's list met the bar.\n"
+        summaries: list[PaperSummary] = []
+    else:
+        summary_model = get_model(config, args.model)
+        try:
+            summaries = summarize_keepers(summary_model, result.keepers, trace=trace)
+        finally:
+            _close_quietly(summary_model)
+
+    # ── Stage 4: render brief; write to vault unless --dry-run ──
+    profile_name = args.model or config.default_model
+    if args.dry_run:
+        body = render_brief(
+            date=run_date,
+            summaries=summaries,
+            keepers=result.keepers,
+            model_profile=profile_name,
+            papers_total=papers_count,
+        )
+        print(f"agent: --dry-run — brief NOT written to vault", file=sys.stderr)
         return AgentResult(final_answer=body, iterations=1, hit_cap=False)
 
-    summary_model = get_model(config, args.model)
-    try:
-        summaries = summarize_keepers(summary_model, result.keepers, trace=trace)
-    finally:
-        _close_quietly(summary_model)
-
-    # ── Provisional output (Sprint 4.1 replaces this with Obsidian write) ──
-    body = _format_summaries_for_stdout(result.keepers, summaries)
-    return AgentResult(final_answer=body, iterations=1, hit_cap=False)
-
-
-def _format_summaries_for_stdout(
-    keepers: list,
-    summaries: list[PaperSummary],
-) -> str:
-    """Render summaries as markdown for the CLI's stdout output.
-
-    Sprint 4.1's brief writer will produce a richer version of this for
-    the Obsidian vault. This function exists so 3.3 has a useful end-to-
-    end output without depending on 4.1.
-    """
-    lines: list[str] = []
-    lines.append(f"# Today's brief — {len(summaries)}/{len(keepers)} papers summarized\n")
-
-    if not summaries:
-        lines.append("(No papers survived the summarize stage — see trace for skips.)\n")
-        return "\n".join(lines)
-
-    for s in summaries:
-        lines.append(f"## {s.title}")
-        lines.append(f"_{s.id}_ — [link]({s.link})\n")
-        lines.append(f"**TL;DR:** {s.tldr}\n")
-        lines.append(f"**Why it matters:** {s.why_it_matters}\n")
-        if s.quote:
-            lines.append(f"> {s.quote}\n")
-
-    if len(summaries) < len(keepers):
-        lines.append(
-            f"\n_({len(keepers) - len(summaries)} keeper(s) skipped — see trace.)_"
-        )
-    return "\n".join(lines) + "\n"
+    brief_path = write_brief(
+        vault_path=config.vault_path,
+        date=run_date,
+        summaries=summaries,
+        keepers=result.keepers,
+        model_profile=profile_name,
+        papers_total=papers_count,
+    )
+    print(f"agent: brief written to {brief_path}", file=sys.stderr)
+    # Stdout: a one-liner pointer to the file so callers can pipe.
+    return AgentResult(final_answer=str(brief_path), iterations=1, hit_cap=False)
 
 
 # ── Mission registry ───────────────────────────────────────────────────
@@ -236,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     mission = MISSIONS[args.mission]
     profile_name = args.model or config.default_model
     run_date = date_cls.today().isoformat()
+    args.date = run_date  # passed through to mission runners
     max_iter = args.max_iter if args.max_iter is not None else config.iteration_cap
 
     trace = TraceWriter(

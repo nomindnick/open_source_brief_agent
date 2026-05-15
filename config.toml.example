@@ -25,7 +25,7 @@ backend = "llamacpp"
 model_name = "qwen3-30b-a3b-q8"
 base_url = "http://127.0.0.1:8080"
 temperature = 0.7
-max_tokens = 8192          # output budget; large enough that reasoning + content both fit
+max_tokens = 16384          # output budget; large enough that reasoning + content both fit
 context_length = 65536     # input budget; one full paper can be ~40K tokens, leaves headroom
 supports_thinking = true   # Qwen3 emits <think>…</think> blocks; adapter strips them into ModelResponse.reasoning
 
@@ -40,6 +40,6 @@ backend = "ollama"
 model_name = "qwen3.5:9b"
 base_url = "http://127.0.0.1:11434"
 temperature = 0.7
-max_tokens = 8192
+max_tokens = 16384
 context_length = 65536
 supports_thinking = true   # Ollama adapter will send "think": true and read message.thinking

@@ -396,7 +396,38 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - A complete brief is ≤ a phone-readable length (no walls of text)
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:** `agent/brief/writer.py` with `render_brief()` (pure function — markdown templating, no I/O), `write_brief()` (atomic temp-file + rename write), `check_vault_writable()` (pre-flight validation). Brief format: YAML frontmatter (date, mission, papers_total, keepers, summarized, model) + `# Morning Brief — <date>` + "How I picked these" (verbatim filter keeper reasons, skipped papers marked) + per-paper sections (H2 title, TL;DR, why-it-matters, optional quote as blockquote, arxiv link). Same-day reruns get `-run-N` suffix. `cli.py`'s `_run_paper_survey` now runs the full pipeline through brief write; `--dry-run` renders to stdout instead. Pre-flight vault check fails fast before the ~15 min pipeline runs. 13 new unit tests.
+>
+> **Acceptance criteria verified on live run (2026-05-15):**
+> - **File appears in vault:** `/home/nick/Documents/vaults/open_source_brief/Briefs/2026-05-15.md` (5195 bytes) was written cleanly. Frontmatter parses; ready for Obsidian to sync to the phone.
+> - **Links are clickable:** Each per-paper section ends with `[2605.14438](https://arxiv.org/abs/2605.14438)` — Obsidian's default markdown renderer makes these clickable as-is.
+> - **Phone-readable length:** Today's brief: 5 paper sections, each ~5-8 sentences with a verbatim quote. Scrollable on phone without walls of text. Total ~5KB.
+> - **Bonus: `--dry-run` works:** Rendered brief to stdout without writing to the vault. Vault folder still contains only the morning's real brief.
+> - **5/5 summarized today.** Today's run picked different papers from yesterday's (the filter is stochastic), all in user's interest areas: agentic RL self-distillation, agent memory validity (STALE), training-free model merging for reasoning, adaptive teacher exposure in distillation, MoE routing for vLLM. Quotes carry concrete numbers (e.g. "2.5× faster decoding", "86.9% on GPQA Diamond", "98% performance retention").
+>
+> **A real bug found and fixed mid-sprint — *not* just a flake.**
+> The "empty filter response" issue we saw transiently in Sprints 3.2 and 3.3 reproduced firmly in 4.1 (twice in a row, then a direct repro confirmed the cause). Root cause: today's 49-paper list pushed the filter's reasoning to ~24K chars (~8K tokens), which is exactly our `max_tokens=8192` budget — model ran out of output budget mid-reasoning and emitted zero content tokens. Yesterday's 50-paper list barely fit (~6K tokens of reasoning); today's pushed over.
+>
+> Two fixes landed:
+> - **`max_tokens` 8192 → 16384** in `config.toml.example` and `config.toml`. Cheap headroom buy on Strix Halo (per the user-flagged "we have headroom" guidance — applying it again).
+> - **`prompts/system_filter.md`** gained a one-paragraph "be efficient with reasoning" instruction telling the model to mentally bucket papers rather than exhaustively walk through each. This is the load-bearing fix; bigger max_tokens just buys safety margin.
+>
+> **Both fixes together:** clean run on the retry. The 9B's filter now produces ~6K reasoning + ~1K content within budget, well under the 16K ceiling.
+>
+> **Operational notes:**
+> - Full pipeline time: 15.4 min on qwen3-9b-ollama (slightly longer than yesterday's 10.5 min — denser list, more reasoning to deliberate over).
+> - 5/5 read+summarize success today (no read failures, unlike yesterday's MinT skip).
+> - 95 → 108 tests passing (13 new brief writer tests). Test suite remains fully green.
+>
+> **Design decisions worth noting:**
+> - **Brief is pure templating, no LLM call.** Filter reasons + structured summaries already carry the user-voice. A "day theme" opener would have required another LLM call for marginal value.
+> - **`--dry-run` works at the brief-write step**, not by skipping the LLM calls. This means dry-run still costs 15 minutes of pipeline time — but you get the *exact* rendered brief without polluting the vault, which is what dry-run is actually for (iterating on the brief format, not on prompts).
+> - **Atomic write via temp-file + rename.** A crash mid-write cannot leave a half-written brief in the vault.
+> - **Skipped papers are visible in "How I picked these"** with `_(read failed; skipped from summaries)_` markers. Transparency over silent omission.
+> - **Frontmatter includes the model profile.** Lets the user A/B different models across days by reading the frontmatter in Obsidian.
+> - **Sprint 5.1's `--dry-run` task is now done.** Removed it from the 5.1 task list.
+>
+> **For Sprint 4.2 (memory):** The brief is the *output* surface; memory write-back happens *alongside* the brief. End-of-run actions: append keeper IDs to `memory/Seen.md`, write a daily reflection note to `memory/Reflections/YYYY-MM-DD.md`, and pre-filter the next day's list to exclude papers seen ≥1 day ago. Reflections + interests get injected into the filter prompt as a `{{recent_reflections}}` placeholder.
 
 ---
 
