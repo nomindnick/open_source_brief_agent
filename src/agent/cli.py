@@ -100,8 +100,14 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
 
     run_date = args.date  # set by main() from local date
 
+    ps_config = config.paper_survey
+
     # ── Stage 1: list (deterministic subprocess) ──
-    papers_md_full = HfPapersListTool().run({})
+    list_tool = HfPapersListTool(
+        timeout_s=ps_config.hf_subprocess_timeout_s,
+        abstract_chars=ps_config.list_abstract_chars,
+    )
+    papers_md_full = list_tool.run({})
     if papers_md_full.startswith("ERROR"):
         print(papers_md_full, file=sys.stderr)
         return AgentResult(final_answer=None, iterations=0, hit_cap=False)
@@ -119,7 +125,8 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     recent_reflection = read_latest_reflection(before_date=run_date) or ""
     trace.log_filter_input(papers_count=papers_count, interests_chars=len(interests))
 
-    model = get_model(config, args.model)
+    filter_profile = config.stage_model("filter", cli_override=args.model)
+    model = get_model(config, filter_profile)
     try:
         try:
             result = filter_papers(
@@ -140,13 +147,23 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     if not result.keepers:
         summaries: list[PaperSummary] = []
     else:
-        summary_model = get_model(config, args.model)
+        summarize_profile = config.stage_model("summarize", cli_override=args.model)
+        summary_model = get_model(config, summarize_profile)
+        read_tool = HfPapersReadTool(timeout_s=ps_config.hf_subprocess_timeout_s)
         try:
-            summaries = summarize_keepers(summary_model, result.keepers, trace=trace)
+            summaries = summarize_keepers(
+                summary_model,
+                result.keepers,
+                trace=trace,
+                max_chars=ps_config.summary_max_chars,
+                read_tool=read_tool,
+            )
         finally:
             _close_quietly(summary_model)
 
     # ── Stage 4: render brief; write to vault unless --dry-run ──
+    # Brief frontmatter records the *default* profile for this run, since
+    # summary/filter/reflection may differ; the trace has the full breakdown.
     profile_name = args.model or config.default_model
     if args.dry_run:
         body = render_brief(
@@ -185,7 +202,8 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
         trace.log_reflection_input(
             brief_chars=len(brief_md), interests_chars=len(interests)
         )
-        reflect_model = get_model(config, args.model)
+        reflection_profile = config.stage_model("reflection", cli_override=args.model)
+        reflect_model = get_model(config, reflection_profile)
         try:
             try:
                 ref = reflect_on_brief(

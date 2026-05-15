@@ -498,7 +498,35 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 - All config is in `config.toml`; no magic numbers in code
 
 **Sprint Update:**
-> _[To be completed]_
+> **Built:**
+> - **Config promotion.** New `[paper_survey]` table in `config.toml` with `list_abstract_chars` (500), `summary_max_chars` (24000), `hf_subprocess_timeout_s` (60). New optional `[paper_survey.models]` table for per-stage profile overrides (`filter` / `summarize` / `reflection`) — each defaults to `default_model` when absent. `Config.stage_model(stage, cli_override)` resolves the right profile per stage. `HfPapersListTool` and `HfPapersReadTool` now take constructor args for timeout and truncation; CLI threads the config values through. Cross-field validator catches typos in per-stage overrides at startup.
+> - **Full README.** Hardware assumptions, hf CLI install, llama.cpp + Ollama setup with exact command lines, every config field documented, brief/trace/memory file locations, `--dry-run` / `--date` / `--model` usage, "Recovering from a bad run" recipes.
+> - **`TROUBLESHOOTING.md`.** 12 entries covering every failure mode hit during MVP development: empty-filter-response (with the root cause + check), `hf papers read` not-found, vault path issues, llama-server context mismatch, connection refused, Obsidian sync timing, undo-today's-run, etc.
+> - **`justfile`.** `just run`, `just dry-run`, `just smoke`, `just test`, `just replay <date>`, `just run-with-model <profile>`, plus the smoke/benchmark model scripts. README points at it.
+>
+> **Acceptance criteria:**
+> - **End-to-end run time:** 15.4 min on qwen3-9b-ollama (today's live run with the new config refactor, before this Sprint Update was written). Filter ~3.5 min reasoning, 5 summaries × ~2 min, reflection ~30s. Comfortable for overnight runs.
+> - **No magic numbers in code:** verified by grepping `src/` — only `DEFAULT_*` named constants in `tools/hf_papers.py` remain, and they're the fallback values when callers don't override. Every tunable is reachable from `config.toml`.
+> - **Fresh-eyes README:** rewritten as a single document a new clone can follow end-to-end. The "Configure" table makes every field's purpose explicit; the "Run" section shows the exact command lines.
+> - **Test suite: 108 passing.** (Earlier sprints overcounted; 108 is the actual number. No tests were dropped or broken by the config refactor.)
+>
+> **MVP IS COMPLETE.** Goals G1–G6 from the SPEC:
+> - **G1 (MVP brief):** ✓ Daily markdown brief lands in the vault each run (Sprint 4.1).
+> - **G2 (interest filter):** ✓ Filter rejects out-of-scope papers and surfaces in-scope ones (Sprint 3.2, validated with live MulTaBench/AnyFlow rejections and 5/5 in-interest keepers).
+> - **G3 (readable reasoning):** ✓ Every run produces a markdown trace that reads as a narrative; reasoning rendered as blockquotes above actions (Sprint 2.3).
+> - **G4 (version-controlled prompts/memory):** ✓ `prompts/` and `memory/` are in git; the project's behavior is reproducibly diffable.
+> - **G5 (swappable backend):** ✓ llama.cpp and Ollama both validated end-to-end; switching backends is one `--model` flag.
+> - **G6 (from-scratch loop):** ✓ Agent loop, XML parser, tool registry are all hand-written. Used by `test` mission and ready for loops 2/3.
+>
+> **Remaining post-MVP work** (documented in SPEC § Future Considerations, not blocking the user from using this tomorrow morning):
+> - Scheduling (systemd user timer for overnight cron-style runs).
+> - Loop 2 (interest-tailored deep dive with web search and arxiv full-text).
+> - Loop 3 (project-aware research using `gh` CLI and the user's repos).
+> - Orchestrator/worker model split (the config knobs are now in place; just need to populate `[paper_survey.models]` with different profiles).
+> - User feedback in-brief loop (deferred per user discussion in Sprint 4.2).
+> - Periodic memory compaction (deferred per user discussion in Sprint 4.2).
+> - Frontier API adapter (interface already accommodates).
+> - Vault-aware memory via Obsidian CLI (deferred until loops 2/3 actually need it).
 
 ---
 

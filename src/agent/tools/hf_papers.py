@@ -17,17 +17,14 @@ from typing import Any
 
 from agent.tools.base import Tool
 
-# Subprocess timeout. The CLI is fast (~1–3s typical) but the read
-# endpoint occasionally hangs on the arxiv side. 60s is what the SPEC asks
-# for and matches a "fail and let the agent retry" budget.
-SUBPROCESS_TIMEOUT_S = 60
-
-# Per-paper abstract truncation for the list view. Keeps a 50-paper list
-# well under 15K tokens even before the model trims further.
-LIST_ABSTRACT_CHARS = 500
+# Defaults used when callers don't override via the constructors.
+# Production wiring sources these from config.toml's [paper_survey] table;
+# tests and ad-hoc scripts get reasonable behavior without configuration.
+DEFAULT_SUBPROCESS_TIMEOUT_S = 60
+DEFAULT_LIST_ABSTRACT_CHARS = 500
 
 
-def _run_hf(args: list[str]) -> tuple[bool, str]:
+def _run_hf(args: list[str], timeout_s: int = DEFAULT_SUBPROCESS_TIMEOUT_S) -> tuple[bool, str]:
     """Invoke ``hf`` with the given args. Returns (success, output_or_error).
 
     Output is captured stdout on success; stderr (or a synthesized message)
@@ -39,14 +36,14 @@ def _run_hf(args: list[str]) -> tuple[bool, str]:
             ["hf", *args],
             capture_output=True,
             text=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
+            timeout=timeout_s,
             check=False,
         )
     except FileNotFoundError:
         return False, "ERROR: `hf` CLI is not installed or not on PATH."
     except subprocess.TimeoutExpired:
         return False, (
-            f"ERROR: `hf {' '.join(args)}` timed out after {SUBPROCESS_TIMEOUT_S}s."
+            f"ERROR: `hf {' '.join(args)}` timed out after {timeout_s}s."
         )
 
     if result.returncode != 0:
@@ -58,7 +55,10 @@ def _run_hf(args: list[str]) -> tuple[bool, str]:
     return True, result.stdout
 
 
-def _format_list_as_markdown(papers: list[dict[str, Any]]) -> str:
+def _format_list_as_markdown(
+    papers: list[dict[str, Any]],
+    abstract_chars: int = DEFAULT_LIST_ABSTRACT_CHARS,
+) -> str:
     """Compress a JSON paper list into a scannable markdown summary."""
     if not papers:
         return "No papers returned for that date."
@@ -68,8 +68,8 @@ def _format_list_as_markdown(papers: list[dict[str, Any]]) -> str:
         title = (p.get("title") or "<untitled>").strip()
         upvotes = p.get("upvotes")
         summary = (p.get("summary") or "").strip()
-        if len(summary) > LIST_ABSTRACT_CHARS:
-            summary = summary[:LIST_ABSTRACT_CHARS].rstrip() + "…"
+        if len(summary) > abstract_chars:
+            summary = summary[:abstract_chars].rstrip() + "…"
         # Normalize whitespace inside the summary so it doesn't visually
         # blow up the list view.
         summary = re.sub(r"\s+", " ", summary)
@@ -132,6 +132,15 @@ class HfPapersListTool(Tool):
         },
     }
 
+    def __init__(
+        self,
+        *,
+        timeout_s: int = DEFAULT_SUBPROCESS_TIMEOUT_S,
+        abstract_chars: int = DEFAULT_LIST_ABSTRACT_CHARS,
+    ) -> None:
+        self._timeout_s = timeout_s
+        self._abstract_chars = abstract_chars
+
     def run(self, input: dict[str, Any]) -> str:
         date = input.get("date") or date_cls.today().isoformat()
         if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
@@ -139,7 +148,10 @@ class HfPapersListTool(Tool):
                 f"ERROR: 'date' must be a YYYY-MM-DD string. Got {date!r}."
             )
 
-        ok, output = _run_hf(["papers", "list", "--date", date, "--format", "json"])
+        ok, output = _run_hf(
+            ["papers", "list", "--date", date, "--format", "json"],
+            timeout_s=self._timeout_s,
+        )
         if not ok:
             return output
 
@@ -151,7 +163,7 @@ class HfPapersListTool(Tool):
         if not isinstance(papers, list):
             return f"ERROR: hf papers list returned unexpected shape: {type(papers).__name__}"
 
-        return _format_list_as_markdown(papers)
+        return _format_list_as_markdown(papers, abstract_chars=self._abstract_chars)
 
 
 class HfPapersReadTool(Tool):
@@ -172,13 +184,16 @@ class HfPapersReadTool(Tool):
         "required": ["id"],
     }
 
+    def __init__(self, *, timeout_s: int = DEFAULT_SUBPROCESS_TIMEOUT_S) -> None:
+        self._timeout_s = timeout_s
+
     def run(self, input: dict[str, Any]) -> str:
         pid = input.get("id")
         if not isinstance(pid, str) or not pid.strip():
             return f"ERROR: 'id' must be a non-empty string. Got {pid!r}."
         pid = pid.strip()
 
-        ok, output = _run_hf(["papers", "read", pid])
+        ok, output = _run_hf(["papers", "read", pid], timeout_s=self._timeout_s)
         if not ok:
             return output
 

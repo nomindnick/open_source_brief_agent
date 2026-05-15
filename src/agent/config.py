@@ -44,6 +44,48 @@ class ModelProfile(BaseModel):
     supports_thinking: bool = False
 
 
+class PaperSurveyModels(BaseModel):
+    """Per-stage model profile overrides for the paper_survey pipeline.
+
+    Each field is optional; when None, the stage falls back to
+    ``Config.default_model``. Lets you put a faster small model on
+    summaries and a stronger one on filter/reflection without code
+    changes — sets up the orchestrator/worker split planned for loops 2/3.
+    """
+
+    filter: str | None = None
+    summarize: str | None = None
+    reflection: str | None = None
+
+
+class PaperSurveyConfig(BaseModel):
+    """Tunable parameters for the paper_survey pipeline.
+
+    All fields have sensible defaults; tighten or loosen per machine.
+    The Strix Halo defaults in ``config.toml.example`` work well for
+    a 9B Ollama model on a 96GB GPU.
+    """
+
+    # ── data shaping ──
+    list_abstract_chars: int = Field(default=500, gt=0)
+    """Per-paper abstract truncation in the daily-list tool's output.
+    Smaller = denser list, more papers fit in filter context; larger =
+    more signal per paper, fewer fit."""
+
+    summary_max_chars: int = Field(default=24_000, gt=0)
+    """Hard cap on paper text passed to the per-paper summarizer.
+    First-N-chars truncation — abstract + intro + early sections in
+    practice. Larger means richer summaries but more prefill cost."""
+
+    # ── subprocess ──
+    hf_subprocess_timeout_s: int = Field(default=60, gt=0)
+    """Timeout (seconds) for ``hf papers list`` / ``hf papers read``.
+    Affects how patient the agent is with slow network days."""
+
+    # ── per-stage model overrides ──
+    models: PaperSurveyModels = PaperSurveyModels()
+
+
 class Config(BaseSettings):
     """Top-level runtime config loaded from config.toml.
 
@@ -60,6 +102,7 @@ class Config(BaseSettings):
     vault_path: Path
     iteration_cap: int = Field(default=25, gt=0)
     models: dict[str, ModelProfile]
+    paper_survey: PaperSurveyConfig = PaperSurveyConfig()
 
     @field_validator("vault_path", mode="after")
     @classmethod
@@ -75,7 +118,35 @@ class Config(BaseSettings):
                 f"default_model={self.default_model!r} is not a defined profile. "
                 f"Known profiles: {known}"
             )
+        # Per-stage overrides must also name known profiles when present.
+        ps = self.paper_survey.models
+        for stage_name, profile_name in (
+            ("filter", ps.filter),
+            ("summarize", ps.summarize),
+            ("reflection", ps.reflection),
+        ):
+            if profile_name is not None and profile_name not in self.models:
+                known = ", ".join(sorted(self.models)) or "<none>"
+                raise ValueError(
+                    f"paper_survey.models.{stage_name}={profile_name!r} is not a "
+                    f"defined profile. Known profiles: {known}"
+                )
         return self
+
+    def stage_model(
+        self,
+        stage: Literal["filter", "summarize", "reflection"],
+        cli_override: str | None = None,
+    ) -> str:
+        """Resolve the profile name for a paper_survey stage.
+
+        Resolution order: explicit CLI ``--model`` override → per-stage
+        override in ``paper_survey.models`` → ``default_model``.
+        """
+        if cli_override:
+            return cli_override
+        stage_override = getattr(self.paper_survey.models, stage)
+        return stage_override or self.default_model
 
     @classmethod
     def settings_customise_sources(

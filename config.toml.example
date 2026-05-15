@@ -7,6 +7,24 @@ default_model = "qwen3-30b-llamacpp"
 vault_path = "/home/nick/Obsidian/Vault"    # absolute path to your Obsidian vault root; briefs land at <vault_path>/Briefs/
 iteration_cap = 25                          # hard safety net for the agent loop
 
+# ── paper_survey mission tunables ────────────────────────────────────────────
+#
+# All fields here are optional — sensible defaults apply. Adjust per your
+# hardware and how you want the daily run to behave.
+[paper_survey]
+list_abstract_chars = 500          # per-paper abstract truncation in the daily list. Larger = more signal per paper, fewer fit in filter context.
+summary_max_chars = 24000          # paper text cap fed to summarizer. ~8K tokens; abstract + intro + early sections in practice.
+hf_subprocess_timeout_s = 60       # how patient to be with `hf papers list/read` on slow network days.
+
+# Per-stage model overrides. Each is optional; falls back to default_model
+# when absent. Useful for orchestrator/worker splits when those land —
+# e.g. a stronger model on filter, a faster small one on summaries.
+#
+# [paper_survey.models]
+# filter = "qwen3-30b-llamacpp"
+# summarize = "qwen3-9b-ollama"
+# reflection = "qwen3-9b-ollama"
+
 # ── llama.cpp profile ────────────────────────────────────────────────────────
 #
 # Requires llama-server running locally, e.g.:
