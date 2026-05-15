@@ -3,7 +3,7 @@
 # Two model profiles below — pick one with `python -m agent --model <profile-name>`,
 # or set `default_model` to choose without an explicit flag.
 
-default_model = "qwen3-30b-llamacpp"
+default_model = "qwen3-9b-ollama"
 vault_path = "/home/nick/Obsidian/Vault"    # absolute path to your Obsidian vault root; briefs land at <vault_path>/Briefs/
 iteration_cap = 25                          # hard safety net for the agent loop
 
