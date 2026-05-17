@@ -530,6 +530,86 @@ Five phases of 1–3 sprints each, sequenced so the agent loop and traces are wo
 
 ---
 
+## Phase 6: Feedback Loop (Post-MVP)
+
+**Goal:** Close the user-feedback loop. The brief carries a structured Feedback section the user fills in during the day; the next run ingests filled entries into a persistent log and injects a sliding window of recent feedback into the filter prompt so picks adapt to recent reactions.
+
+### Sprint 6.1: Structured Feedback in the Brief
+
+**Estimated Time:** 1.5–2 hours
+
+**Objective:** Add a `## Feedback` section to each brief (one entry per summarized paper, prepopulated with title + id). Parse filled entries from prior briefs into `memory/Feedback.md`. Inject the last 10 dated blocks into the filter prompt. Consolidation into `Interests.md` is explicitly out of scope.
+
+**Data shapes:**
+
+Brief template (appended to `render_brief` output):
+```
+## Feedback
+
+### <Paper Title> (<id>)
+- Signal: [ ]
+- Notes:
+```
+
+`memory/Feedback.md` (only contains filled entries; written by the ingest step):
+```
+## 2026-05-15
+
+### MAP-then-Act (2605.13880)
+- Signal: [+]
+- Notes: Want more on agent memory validity / staleness checks.
+```
+
+**Tasks:**
+- [ ] `src/agent/memory/io.py`: add `FeedbackEntry` dataclass + `parse_brief_feedback()`, `feedback_dates()`, `append_feedback()`, `read_recent_feedback()`.
+- [ ] `src/agent/feedback.py`: new module with `ingest_pending_feedback(vault_path, memory_dir, run_date, trace) -> int`. Globs `<vault_path>/Briefs/*.md`, regex-matches `^(\d{4}-\d{2}-\d{2})(?:-run-\d+)?\.md$`, groups by date, picks the lex-last variant per date, ingests dates strictly < run_date and not already in Feedback.md.
+- [ ] `src/agent/brief/writer.py`: extend `render_brief` to append `## Feedback` section. Iterates `summaries` only (skipped keepers omitted, since the user has no body to react to). Section omitted entirely when `summaries` is empty.
+- [ ] `prompts/system_filter.md`: add `{{recent_feedback}}` placeholder section between `{{recent_reflection}}` and `{{papers}}`.
+- [ ] `src/agent/filter.py`: `filter_papers` gains `recent_feedback: str = ""` param.
+- [ ] `src/agent/config.py`: add `feedback_window: int = 10` to `PaperSurveyConfig`. Update `config.toml.example`.
+- [ ] `src/agent/loop.py` TraceSink + `agent/trace/writer.py` + stubs: add `log_feedback_ingest(briefs_processed, new_entries, total_dates)` and `log_feedback_inject(window_size, chars)`.
+- [ ] `src/agent/cli.py` `_run_paper_survey`: add Stage 0 (ingest) before list fetch; pass `read_recent_feedback(...)` to `filter_papers`. Skip both in `--dry-run`.
+- [ ] Unit tests: parse (filled/blank/mixed/missing-section/malformed-heading), append (idempotency, header on first write), read_recent (window, sort, empty), ingest (no-op on legacy briefs, picks lex-last variant per date), render_brief (Feedback section present/absent), filter_papers wires `recent_feedback` into the prompt.
+
+**Acceptance Criteria:**
+- Today's brief contains a `## Feedback` section with one entry per summarized paper, signal/notes blank.
+- Manually filling 1–2 entries in `Briefs/2026-05-15.md`, then running with a later `--date`: trace shows `feedback_ingest` event with `new_entries > 0`; `Feedback.md` contains a new `## 2026-05-15` block with just the filled entries; filter trace's reasoning visibly references the feedback.
+- Legacy briefs (2026-05-14, -15, -16, -17 — none with Feedback sections at deploy time) ingest as no-ops; no spurious empty dated blocks in `Feedback.md`.
+- Test suite remains green; +~12 new tests.
+
+**Out of scope (deferred):**
+- Consolidation pass that distills `Feedback.md` into a "Learned preferences" section of `Interests.md`. Revisit in 2–3 weeks once `Feedback.md` has real signal.
+- More expressive signal markers beyond `[+]` / `[-]`.
+- Per-topic feedback not tied to a specific paper (free-form notes inside an existing entry can carry this for now).
+
+**Sprint Update:**
+> **Built:** `agent/memory/io.py` extended with `FeedbackEntry` dataclass, `parse_brief_feedback`, `feedback_dates`, `append_feedback`, `read_recent_feedback`. New `agent/feedback.py` with `ingest_pending_feedback` (handles the lex-last-`-run-N` variant per date, idempotency via `feedback_dates`, before-date guard). `agent/brief/writer.py` `render_brief` appends a `## Feedback` section with prepopulated `### <Title> (<id>)` entries — one per summarized paper, omitted when summaries is empty. `prompts/system_filter.md` gains `{{recent_feedback}}` placeholder with copy explicitly telling the model that feedback outranks general interests when they conflict on a specific topic. `agent/filter.py` `filter_papers` gains `recent_feedback: str = ""` param. `agent/config.py` adds `paper_survey.feedback_window: int = 10`; `config.toml.example` updated. `TraceSink` Protocol + `TraceWriter` + `NoOpTrace` / `StdoutTrace` all gain `log_feedback_ingest` and `log_feedback_inject`. `agent/cli.py` `_run_paper_survey` adds Stage 0 (ingest, skipped in `--dry-run`) before list fetch; threads `read_recent_feedback(...)` into `filter_papers`; both new trace events fire.
+>
+> **Acceptance criteria verified:**
+> - **Feedback section in brief:** verified via direct `render_brief` call — `## Feedback` with one `### <Title> (<id>)` per summarized paper, `- Signal: [ ]` / `- Notes:` prepopulated, section omitted when there are no summaries.
+> - **Legacy briefs no-op:** ran `ingest_pending_feedback` against the real vault (6 briefs from 2026-05-15 through 2026-05-17, none with Feedback sections). Result: 0 new blocks added, `memory/Feedback.md` not created. No spurious dated blocks.
+> - **Test suite:** 108 → 138 passing (+30 tests: 27 in new `test_feedback.py`, 3 in `test_brief_writer.py`). All existing tests green.
+>
+> **Live end-to-end verification deferred to Monday's natural run.** Today is Sunday 2026-05-17, and HF Daily Papers doesn't update on the weekend, so simulating a multi-day cycle in code would either touch real `Seen.md` / Reflections in awkward ways or require throwaway date replays. The natural path: user hand-adds a Feedback section to `Briefs/2026-05-15.md`, fills in 1–2 entries, then Monday's overnight run (with real fresh papers) ingests it and the filter trace should visibly reference the feedback.
+>
+> **Design decisions worth noting:**
+> - **Lex-last `-run-N` per date wasn't enough.** Initial implementation used `max(paths, key=lambda p: p.name)` for picking the canonical brief per date. Tests immediately caught the bug: `-` (0x2D) < `.` (0x2E), so `"2026-05-14-run-9.md"` sorts *before* `"2026-05-14.md"` as a string — `max()` would pick the plain variant over any run suffix. Fix: parse the `-run-N` integer explicitly (plain treated as run 1, suffixes as their numeric value, highest wins). One sentence of comment in the helper documents the footgun.
+> - **Idempotency at the date level, not the entry level.** Once a date appears in `Feedback.md`, the brief for that date is never re-parsed even if the user edits it post-ingest. Re-ingest = delete the dated heading. Trade-off: simple and predictable. The alternative (entry-level diff) would be brittle and surprise the user when their later edits silently appended duplicates.
+> - **Unfilled-stub heuristic: skip if both signal is None and notes is empty.** Models often add prose preambles; users will leave most entries blank. The parser must skip these without raising, so the user can fill in only the papers they care about and ignore the rest.
+> - **Signal markers strict at `[+]` / `[-]`.** Anything else (including `[  ]`, `[ ]`, `[?]`) is "no signal." Lets the user safely use the prepopulated `[ ]` template without accidental signal noise, and leaves room for a third marker later if needed.
+> - **Heading is `### <Title> (<id>)`, not `### <id>: <Title>`.** Reads more naturally on phone and lets the title be the dominant signal in skimming. The parser regex captures the id from the trailing parens, which is unambiguous as long as titles don't contain `(<id-like>)` strings — defensible heuristic, easy to revisit if it ever breaks.
+> - **Feedback section is omitted when `summaries=[]`.** Empty briefs (filter found nothing) shouldn't carry a vestigial "## Feedback" header with no entries — would look broken in Obsidian.
+> - **Trace MD is conditional.** `log_feedback_ingest` only emits a markdown section when something actually happened (briefs_processed or new_entries > 0); legacy-state runs don't carry a noisy zero-block. JSONL events fire unconditionally for telemetry.
+> - **Ingest is wrapped in try/except in the CLI.** Per the project's "memory write-back is best-effort" principle from Sprint 4.2 — feedback ingest failures shouldn't break the run; the brief is the load-bearing output.
+>
+> **Out of scope and deferred to a future sprint (no concrete timeline yet):**
+> - Consolidation pass that distills `Feedback.md` into a "Learned preferences" section of `Interests.md` every 2–3 weeks. Re-evaluate after `Feedback.md` has ~2 weeks of real signal — easier to design the distillation prompt when you can see the actual feedback distribution.
+> - More expressive signal markers. Will only add if `[+]` / `[-]` proves too coarse in practice.
+>
+> **For tomorrow's run:** No code changes needed. If you hand-add a `## Feedback` section to `Briefs/2026-05-15.md` (or any pre-deploy brief) with at least one filled `### <Title> (<id>)` entry, the next run's trace should show `feedback_ingest` with `new_entries >= 1` and the filter's reasoning content should reference the feedback (the prompt copy is the load-bearing piece; first live run is where we'll see if the model takes the cue or ignores it — that's a prompt-iteration question, not a code question).
+
+---
+
 ## Implementation Notes
 
 ### Dependencies Between Sprints

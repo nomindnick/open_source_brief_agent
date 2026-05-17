@@ -80,6 +80,12 @@ class TraceSink(Protocol):
     def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None: ...
     def log_reflection_output(self, content: str, reasoning: str | None) -> None: ...
 
+    # ── feedback loop (Sprint 6.1) ─────────────────────────────────────
+    def log_feedback_ingest(
+        self, briefs_processed: int, new_entries: int, total_dates: int
+    ) -> None: ...
+    def log_feedback_inject(self, window_size: int, chars: int) -> None: ...
+
 
 class NoOpTrace:
     """A trace sink that drops every event. For tests."""
@@ -99,6 +105,10 @@ class NoOpTrace:
     def log_seen_filter(self, dropped: int, total_seen: int) -> None: ...
     def log_reflection_input(self, brief_chars: int, interests_chars: int) -> None: ...
     def log_reflection_output(self, content: str, reasoning: str | None) -> None: ...
+    def log_feedback_ingest(
+        self, briefs_processed: int, new_entries: int, total_dates: int
+    ) -> None: ...
+    def log_feedback_inject(self, window_size: int, chars: int) -> None: ...
 
 
 class StdoutTrace:
@@ -178,6 +188,19 @@ class StdoutTrace:
             self._w(reasoning)
         self._w("[reflection]")
         self._w(content)
+
+    def log_feedback_ingest(
+        self, briefs_processed: int, new_entries: int, total_dates: int
+    ) -> None:
+        self._w(
+            f"[feedback ingest] briefs_processed={briefs_processed} "
+            f"new_entries={new_entries} total_dates={total_dates}"
+        )
+
+    def log_feedback_inject(self, window_size: int, chars: int) -> None:
+        self._w(
+            f"[feedback inject] window_size={window_size} chars={chars}"
+        )
 
     @staticmethod
     def _w(s: str) -> None:

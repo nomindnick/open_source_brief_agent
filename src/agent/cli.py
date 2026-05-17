@@ -22,12 +22,14 @@ from typing import Callable
 
 from agent.brief.writer import check_vault_writable, render_brief, write_brief
 from agent.config import Config, load_config
+from agent.feedback import ingest_pending_feedback
 from agent.filter import FilterError, exclude_seen_papers, filter_papers
 from agent.loop import AgentResult, TraceSink, run_agent
 from agent.memory.io import (
     append_seen_ids,
     read_interests,
     read_latest_reflection,
+    read_recent_feedback,
     read_seen_ids,
     write_reflection,
 )
@@ -102,6 +104,27 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
 
     ps_config = config.paper_survey
 
+    # ── Stage 0: ingest user feedback from prior briefs (Sprint 6.1) ──
+    # Scans the vault for briefs whose date is strictly < today and
+    # whose date isn't already a heading in Feedback.md; parses filled
+    # entries from each brief's Feedback section and appends a dated
+    # block to Feedback.md. Legacy briefs (no Feedback section) are
+    # silently no-op'd. Skipped in --dry-run so iterating prompts
+    # doesn't quietly mutate memory.
+    if not args.dry_run:
+        try:
+            ingest_pending_feedback(
+                vault_path=config.vault_path,
+                run_date=run_date,
+                trace=trace,
+            )
+        except Exception as e:  # noqa: BLE001 — ingest is best-effort
+            print(
+                f"agent: feedback ingest failed (non-fatal): "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+
     # ── Stage 1: list (deterministic subprocess) ──
     list_tool = HfPapersListTool(
         timeout_s=ps_config.hf_subprocess_timeout_s,
@@ -123,14 +146,24 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
     # ── Stage 2: filter (non-agentic LLM call) ──
     interests = read_interests()
     recent_reflection = read_latest_reflection(before_date=run_date) or ""
+    recent_feedback = read_recent_feedback(
+        window=ps_config.feedback_window, before_date=run_date
+    )
     trace.log_filter_input(papers_count=papers_count, interests_chars=len(interests))
+    trace.log_feedback_inject(
+        window_size=ps_config.feedback_window, chars=len(recent_feedback)
+    )
 
     filter_profile = config.stage_model("filter", cli_override=args.model)
     model = get_model(config, filter_profile)
     try:
         try:
             result = filter_papers(
-                model, papers_md, interests, recent_reflection=recent_reflection
+                model,
+                papers_md,
+                interests,
+                recent_reflection=recent_reflection,
+                recent_feedback=recent_feedback,
             )
         except FilterError as e:
             print(f"agent: filter failed: {e}", file=sys.stderr)
@@ -174,7 +207,10 @@ def _run_paper_survey(config: Config, args: argparse.Namespace, trace: TraceSink
             papers_total=papers_count,
         )
         print(f"agent: --dry-run — brief NOT written to vault", file=sys.stderr)
-        print(f"agent: --dry-run — Seen.md and Reflections NOT updated", file=sys.stderr)
+        print(
+            f"agent: --dry-run — Seen.md, Reflections, and Feedback.md NOT updated",
+            file=sys.stderr,
+        )
         return AgentResult(final_answer=body, iterations=1, hit_cap=False)
 
     brief_path = write_brief(

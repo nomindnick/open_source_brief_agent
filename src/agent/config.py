@@ -82,6 +82,11 @@ class PaperSurveyConfig(BaseModel):
     """Timeout (seconds) for ``hf papers list`` / ``hf papers read``.
     Affects how patient the agent is with slow network days."""
 
+    # ── feedback loop (Sprint 6.1) ──
+    feedback_window: int = Field(default=10, gt=0)
+    """How many most-recent dated blocks from ``Feedback.md`` to inject
+    into the filter prompt. 10 covers ~2 weeks accounting for weekends."""
+
     # ── per-stage model overrides ──
     models: PaperSurveyModels = PaperSurveyModels()
 

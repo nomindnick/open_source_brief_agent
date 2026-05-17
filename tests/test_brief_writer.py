@@ -145,6 +145,60 @@ def test_render_empty_keepers_says_nothing_met_bar():
     assert "Nothing on today's list met the bar" in md
 
 
+# ── Feedback section (Sprint 6.1) ─────────────────────────────────────
+
+
+def test_render_includes_feedback_section_per_summarized_paper():
+    summaries = [
+        _sample_summary("a.b", title="First Paper"),
+        _sample_summary("c.d", title="Second Paper"),
+    ]
+    md = render_brief(
+        date="2026-05-15",
+        summaries=summaries,
+        keepers=[_sample_keeper("a.b"), _sample_keeper("c.d")],
+        model_profile="m",
+        papers_total=10,
+    )
+    assert "## Feedback" in md
+    assert "### First Paper (a.b)" in md
+    assert "### Second Paper (c.d)" in md
+    # Both entries have the prepopulated empty signal + notes lines.
+    assert md.count("- Signal: [ ]") == 2
+    assert md.count("- Notes:") == 2
+
+
+def test_render_omits_feedback_section_when_no_summaries():
+    md = render_brief(
+        date="2026-05-15",
+        summaries=[],
+        keepers=[_sample_keeper()],
+        model_profile="m",
+        papers_total=10,
+    )
+    assert "## Feedback" not in md
+
+
+def test_render_feedback_skips_keepers_without_summaries():
+    # Two keepers, but only one summarized — the unsummarized keeper
+    # should NOT get a Feedback entry (no body for the user to react to).
+    keepers = [_sample_keeper("a"), _sample_keeper("b")]
+    summaries = [_sample_summary("a", title="Summary A")]
+    md = render_brief(
+        date="2026-05-15",
+        summaries=summaries,
+        keepers=keepers,
+        model_profile="m",
+        papers_total=10,
+    )
+    assert "### Summary A (a)" in md
+    # Look in the Feedback section specifically — "b" appears elsewhere
+    # in How-I-Picked-These, but should not have a Feedback ### entry.
+    fb_start = md.index("## Feedback")
+    fb_section = md[fb_start:]
+    assert "(b)" not in fb_section
+
+
 # ── write_brief (file I/O) ────────────────────────────────────────────
 
 

@@ -318,6 +318,39 @@ class TraceWriter:
             self._write_md(f"> **Reflection reasoning**\n>\n{quoted}\n\n")
         self._write_md(f"```\n{content}\n```\n\n")
 
+    # ── feedback loop (Sprint 6.1) ─────────────────────────────────────
+
+    def log_feedback_ingest(
+        self, briefs_processed: int, new_entries: int, total_dates: int
+    ) -> None:
+        self._write_jsonl_event(
+            "feedback_ingest",
+            briefs_processed=briefs_processed,
+            new_entries=new_entries,
+            total_dates=total_dates,
+        )
+        # Only emit a markdown section when something actually happened.
+        # Otherwise legacy-brief runs would have a noisy "0 / 0 / 0" block.
+        if briefs_processed or new_entries:
+            self._write_md(
+                f"---\n\n## Feedback ingest\n\n"
+                f"- **Briefs scanned:** {briefs_processed}\n"
+                f"- **New feedback entries logged:** {new_entries}\n"
+                f"- **Total dated blocks in Feedback.md:** {total_dates}\n\n"
+            )
+
+    def log_feedback_inject(self, window_size: int, chars: int) -> None:
+        self._write_jsonl_event(
+            "feedback_inject",
+            window_size=window_size,
+            chars=chars,
+        )
+        if chars:
+            self._write_md(
+                f"- **Feedback injected into filter prompt:** "
+                f"{window_size} block(s), {chars} chars\n\n"
+            )
+
     def close(self) -> None:
         if self._closed:
             return

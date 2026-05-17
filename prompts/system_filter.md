@@ -16,6 +16,12 @@ Favor papers in the user's high-interest areas. Down-weight or skip papers in th
 
 {{recent_reflection}}
 
+## Recent reader feedback
+
+(May be empty if the reader hasn't written any yet. Each block is one prior brief's filled-in Feedback section. `[+]` = the reader wants more like this paper; `[-]` = less. The reader's notes are concrete signal on a specific paper or topic — **when this conflicts with the general interests above on a specific topic, the feedback wins**.)
+
+{{recent_feedback}}
+
 ## Today's paper list
 
 {{papers}}

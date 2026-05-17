@@ -15,6 +15,7 @@ iteration_cap = 25                          # hard safety net for the agent loop
 list_abstract_chars = 500          # per-paper abstract truncation in the daily list. Larger = more signal per paper, fewer fit in filter context.
 summary_max_chars = 24000          # paper text cap fed to summarizer. ~8K tokens; abstract + intro + early sections in practice.
 hf_subprocess_timeout_s = 60       # how patient to be with `hf papers list/read` on slow network days.
+feedback_window = 10               # how many recent dated blocks from Feedback.md to inject into the filter prompt (~2 weeks of weekday entries).
 
 # Per-stage model overrides. Each is optional; falls back to default_model
 # when absent. Useful for orchestrator/worker splits when those land —

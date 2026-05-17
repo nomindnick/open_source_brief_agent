@@ -204,6 +204,7 @@ def filter_papers(
     list_markdown: str,
     interests: str,
     recent_reflection: str = "",
+    recent_feedback: str = "",
 ) -> FilterResult:
     """Run the filter stage: pick keepers from the day's paper list.
 
@@ -212,6 +213,10 @@ def filter_papers(
             profile than the orchestrator — the filter is bounded I/O.
         list_markdown: Output of ``HfPapersListTool``.
         interests: Contents of ``memory/Interests.md``.
+        recent_reflection: Most recent prior-day reflection, injected
+            into the prompt to weight today's picks.
+        recent_feedback: Sliding window of recent user feedback (last N
+            dated blocks from ``Feedback.md``). Empty string when none.
 
     Returns:
         :class:`FilterResult` carrying the keepers and the raw model response
@@ -227,6 +232,7 @@ def filter_papers(
         interests=interests,
         papers=list_markdown,
         recent_reflection=recent_reflection,
+        recent_feedback=recent_feedback,
     )
     response = model.complete([{"role": "user", "content": user_prompt}])
     keepers = parse_filter_response(response.content)

@@ -130,6 +130,19 @@ def render_brief(
             sections.append("\n".join(section_lines))
         body = ("\n\n---\n\n").join(sections) + "\n"
 
+    # Feedback section — one prepopulated entry per summarized paper.
+    # Skipped keepers are omitted (no body to react to). When there are
+    # no summaries, the whole section is omitted.
+    feedback_block = ""
+    if summaries:
+        fb_lines = ["## Feedback", ""]
+        for s in summaries:
+            fb_lines.append(f"### {s.title} ({s.id})")
+            fb_lines.append("- Signal: [ ]")
+            fb_lines.append("- Notes:")
+            fb_lines.append("")
+        feedback_block = "\n---\n\n" + "\n".join(fb_lines)
+
     return (
         "\n".join(fm_lines)
         + header
@@ -139,6 +152,7 @@ def render_brief(
         + how_block
         + "\n\n---\n\n"
         + body
+        + feedback_block
     )
 
 
